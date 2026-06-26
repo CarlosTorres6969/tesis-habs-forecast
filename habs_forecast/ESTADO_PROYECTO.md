@@ -64,6 +64,9 @@ de nubes SCL, 2023–2026, descarga local incremental) se bajaron **+487 escenas
 Yojoa 78→196, Cajón 79→179, Fonseca 139→272, Tampa 83→219 (Okeechobee intacto). Pares **2890→4327**.
 Re-corrida la validación anidada, el antes/después (skill de regresión, IC95%):
 
+> ⚠️ Tabla INTERMEDIA (efecto de la densificación S2, **pre-Landsat-Cajón**). Para las cifras
+> vigentes ver "NÚMEROS OFICIALES (reconciliados 2026-06-26)" más abajo / `REPORTE_DEFENSA.md`.
+
 | Horiz | LAGOS antes | LAGOS después | COSTA antes | COSTA después |
 |------|-------------|---------------|-------------|---------------|
 | +1d | +0.24 [.16,.33] | **+0.25 [.16,.34]** | +0.04 [ns] | +0.21 [−.00,.44] |
@@ -102,18 +105,24 @@ Re-corrida la validación anidada, el antes/después (skill de regresión, IC95%
   y el entrenamiento ahora usan el **DEV agrupado de todos los cuerpos del grupo** (una decisión por
   grupo-horizonte, alineado con producción que entrena por grupo), y entre combinaciones casi
   empatadas en DEV se elige la de menos familias (parsimonia, regla anti-sobreajuste de selección).
-  Esto **redujo la varianza de selección y subió los números honestos**. Números oficiales (test
-  intacto, IC95%, `*`=significativo):
+  Esto **redujo la varianza de selección y subió los números honestos**.
+
+  > **NÚMEROS OFICIALES (reconciliados 2026-06-26)** — test intacto, IC95% bootstrap,
+  > `*`=significativo (IC no cruza 0). Esta tabla es la **única fuente de verdad** y coincide
+  > exactamente con `REPORTE_DEFENSA.md` y `artifacts/reports/nested_metrics.json`. Incluye Cajón
+  > (densificado con Landsat); los valores intermedios mencionados en otras secciones de este
+  > documento (p.ej. +7d lagos 0.32, pre-Cajón) quedan **superados** por estos.
 
   | Horiz | LAGOS | COSTA |
   |------|-------|-------|
-  | +1d | +0.25 [.16,.34]* | +0.10 [−.14,.31] |
-  | +3d | +0.17 [.08,.24]* | +0.22 [.07,.39]* |
-  | +5d | +0.19 [.10,.28]* | +0.28 [.08,.49]* |
-  | +7d | **+0.32 [.23,.38]*** | +0.28 [−.05,.49] |
+  | +1d | +0.23 [.14,.31]* | +0.11 [−.14,.32] |
+  | +3d | +0.09 [−.03,.21] | +0.32 [.12,.52]* |
+  | +5d | +0.19 [.12,.27]* | +0.25 [.04,.43]* |
+  | +7d | +0.24 [.14,.32]* | +0.27 [−.06,.50] |
 
-  Lagos significativos en TODOS los horizontes (antes +7d 0.20 → ahora **0.32**); costa significativa
-  a +3d y +5d (antes +5d 0.23 → **0.28**). Alerta lagos PR-AUC +1d 0.38.
+  Lagos significativos a **+1d, +5d y +7d** (+3d no significativo tras incluir Cajón, el cuerpo más
+  difícil); costa significativa a **+3d y +5d** (+1d y +7d no significativos, IC cruza 0). Alerta
+  lagos PR-AUC +1d 0.57. Cuerpos en el test: lagos = Okeechobee/Yojoa/Cajón, costa = Tampa/Fonseca.
 - **NO ADOPTADO — features de dinámica temporal + estacionalidad** (`DYNAMICS`, `SEASONAL`, causales,
   construidas en `match_pairs.py`): probadas con `HABS_NEWFEATS=1` en validación anidada CONTROLADA
   (con vs sin, mismo protocolo y datos). Veredicto: **lavado** (mejoran +5d lagos pero empeoran +3d
@@ -204,9 +213,30 @@ validación; pronóstico causal intacto, solo datos ≤ t0). Reusa `predict.fore
 Cómo operar: `python run_forecast.py` (emite y registra) · `python run_forecast.py --backfill 12` (siembra
 histórico) · `python verify_forecasts.py` (evalúa lo madurado) · `python build_model_cards.py` (refresca cards).
 
+## RECONCILIACIÓN DE REPORTE + FIGURAS (2026-06-26) — HECHO
+- **Reporte reconciliado**: se re-corrió `evaluate_nested.py` (refresca `nested_metrics.json` +
+  `nested_test_predictions.csv`; reentrena solo modelos de EVALUACIÓN efímeros, no los de producción)
+  y se regeneró `REPORTE_DEFENSA.md` con `build_final_report.py`. El reporte ya leía los JSON oficiales;
+  se ajustó SOLO el display (no la evaluación): tabla de validación anidada ahora muestra la columna
+  **Familias** y lista los **cuerpos reales del test** desde `nested_test_predictions.csv` (antes imprimía
+  "_grupo" porque la selección es agrupada). **REPORTE_DEFENSA.md, nested_metrics.json y la tabla
+  "NÚMEROS OFICIALES" de este documento coinciden ahora exactamente.**
+- **Discrepancia encontrada y corregida**: la antigua tabla "Números oficiales" tenía cifras
+  **pre-Landsat-Cajón** (+3d lagos 0.17*, +7d lagos 0.32*). Los números vigentes (con Cajón incluido)
+  son +3d lagos **0.09 (ns)** y +7d lagos **0.24***, costa +3d **0.32***/+5d **0.25***. Coincide con lo
+  ya anticipado en la sección de Landsat ("+3d→ns, +7d 0.32→0.24"). Tablas intermedias quedaron marcadas.
+- **Figuras regeneradas** (`build_validation_figs.py`, leen los JSON/CSV oficiales → consistentes por
+  construcción) en `artifacts/reports/`: `fig_skill_horizonte.png` (verificada visualmente: lagos +3d
+  gris ns, costa +1d/+7d gris ns — coincide con la tabla), `fig_cobertura_intervalos.png`,
+  `fig_pr_alerta.png`, `fig_serie_temporal.png`, `fig_dispersion_freshwater.png`,
+  `fig_dispersion_marine.png`. (Nota: `interval_metrics.json` proviene de `evaluate_intervals.py`, no
+  cambió; la cobertura mostrada sigue válida con los mismos datos.)
+- **Integridad**: `check_integrity.py` = **14/14 OK** (11 de honestidad/causalidad + 3 de la capa
+  operativa). Sin fuga, causal, consistente.
+
 ## QUÉ SIGUE (pendiente)
-Modelos en estado de defensa. Quedan, cuando el usuario lo indique (EN PAUSA): figuras, notebook
-limpio y redacción de tesis.
+Modelos en estado de defensa. Quedan, cuando el usuario lo indique (EN PAUSA): notebook limpio y
+redacción de tesis. (Figuras de validación: HECHAS y reconciliadas.)
 
 ## EN PAUSA (no hacer hasta que el usuario lo pida)
 Figuras, notebook limpio que reemplace los viejos, redacción de tesis.
