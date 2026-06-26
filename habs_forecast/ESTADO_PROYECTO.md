@@ -137,6 +137,14 @@ Re-corrida la validación anidada, el antes/después (skill de regresión, IC95%
   NDCI/CI_red/FAI → aportaría pares pero con señal espectral degradada. Queda como experimento
   opcional, se prefirió la mejora segura (intervalos).
 
+## REPRODUCIBILIDAD + GITHUB (2026-06-25)
+- Repo en **GitHub (privado)**: `CarlosTorres6969/tesis-habs-forecast`. Solo código+docs; los datos
+  pesados (~44 GB: imagenes/, era5_temp_nc/, datasets/, artifacts/) quedan fuera vía `.gitignore`.
+- Añadidos `requirements.txt`, `run_pipeline.py` (orquestación) y `check_integrity.py` (test de
+  honestidad: 11/11 OK — sin fuga, causalidad, features limpias, intervalos guardados).
+- Fix de datos: `match_pairs.py` ahora elimina **duplicados exactos** (se quitaron 97; 4374→4277
+  pares). Las escenas distintas del mismo día (espectro diferente) se conservan (legítimas).
+
 ## QUÉ SIGUE (pendiente)
 Modelos en estado de defensa. Quedan, cuando el usuario lo indique (EN PAUSA): figuras, notebook
 limpio y redacción de tesis.
@@ -165,6 +173,8 @@ Figuras, notebook limpio que reemplace los viejos, redacción de tesis.
 - `evaluate_robust.py` — evaluación OOS de ventana expansiva con bootstrap IC95%.
 - `evaluate_nested.py` — **validación anidada + test final intacto** (números definitivos #4).
 - `evaluate_intervals.py` — valida cobertura de los **intervalos de incertidumbre P10–P90 (CQR)**.
+- `check_integrity.py` — **test de integridad ejecutable** (sin fuga / causal / consistente); 11/11 OK.
+- `run_pipeline.py` — orquesta el pipeline de modelado en orden (reproducibilidad).
 - `era5_sensitivity.py` — **sensibilidad ERA5 reanálisis vs pronóstico** (ablación + ruido #5).
 - `train_final.py` / `predict.py` / `calibrate_alert.py` / `make_maps.py` — sistema desplegable.
 - `variables_modelo.txt` — lista de variables del modelo.

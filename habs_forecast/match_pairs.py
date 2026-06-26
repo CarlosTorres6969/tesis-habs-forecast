@@ -196,6 +196,13 @@ def build():
     if C.USE_RELATIVE_THRESHOLD:
         df["hab_target"] = (df["chl_target"] >= df["thr_body"]).astype(int)
 
+    # quitar duplicados EXACTOS (misma escena procesada dos veces -> fila identica). Las escenas
+    # distintas del mismo dia (tiles/pasadas con espectro diferente) NO son duplicados y se conservan.
+    n0 = len(df)
+    df = df.drop_duplicates().reset_index(drop=True)
+    if len(df) < n0:
+        print(f"  (quitados {n0 - len(df)} pares duplicados exactos)")
+
     os.makedirs(C.DIR_PAIRS, exist_ok=True)
     df.to_csv(OUT, index=False)
     print("\n=== umbral relativo por cuerpo (ug/L, P{}) ===".format(C.RELATIVE_PERCENTILE))
