@@ -23,7 +23,7 @@ Test = último ~25% del tiempo por (grupo,horizonte), nunca tocado; features ele
 |---|---|---|---|---|
 | +1d | +0.23 [+0.14,+0.31]* | +0.57 [+0.25,+0.88]* | 121 | 8 |
 | +3d | +0.09 [-0.03,+0.21]  | +0.20 [+0.09,+0.39]* | 112 | 11 |
-| +5d | +0.19 [+0.12,+0.27]* | +0.05 [+0.02,+0.10]* | 109 | 6 |
+| +5d | +0.19 [+0.12,+0.27]* | +0.05 [+0.02,+0.12]* | 109 | 6 |
 | +7d | +0.24 [+0.14,+0.32]* | +0.07 [+0.03,+0.14]* | 108 | 6 |
 
 Cuerpos en el test: _grupo.
@@ -55,10 +55,10 @@ Ablación (aporte real de ERA5) y estrés de ruido (skill con ruido al 100% de l
 
 | Grupo | Horiz | Skill con ERA5 | Aporte ERA5 | Skill con ruido 100% |
 |---|---|---|---|---|
-| Lagos | +1d | +0.17 [+0.10,+0.23]* | -0.007 | +0.168 |
-| Lagos | +3d | +0.16 [+0.09,+0.22]* | +0.043 | +0.110 |
-| Lagos | +5d | +0.12 [+0.05,+0.17]* | -0.021 | +0.079 |
-| Lagos | +7d | +0.22 [+0.16,+0.27]* | +0.016 | +0.215 |
+| Lagos | +1d | +0.17 [+0.10,+0.23]* | -0.018 | +0.168 |
+| Lagos | +3d | +0.15 [+0.09,+0.21]* | +0.049 | +0.106 |
+| Lagos | +5d | +0.12 [+0.06,+0.18]* | -0.019 | +0.097 |
+| Lagos | +7d | +0.20 [+0.15,+0.26]* | -0.006 | +0.207 |
 | Costa | +1d | -0.01 [-0.22,+0.17]  | -0.040 | +0.002 |
 | Costa | +3d | +0.13 [-0.01,+0.27]  | -0.001 | +0.124 |
 | Costa | +5d | +0.12 [-0.01,+0.24]  | +0.023 | +0.098 |
@@ -80,7 +80,7 @@ Ensamble Red+XGBoost, calibración isotónica + umbral F2 (prioriza recall: perd
 
 | Grupo | Umbral operativo | Recall | Precisión |
 |---|---|---|---|
-| Lagos | 0.06 | 0.81 | 0.17 |
+| Lagos | 0.07 | 0.81 | 0.17 |
 | Costa | 0.05 | 1.00 | 0.21 |
 
 *(Recall/precisión de la última corrida de `calibrate_alert.py`; recall alto a propósito para alerta temprana.)*
