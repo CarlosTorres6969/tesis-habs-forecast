@@ -166,6 +166,44 @@ offset cross-sensor** (la limitación no tiene impacto práctico). Se conserva c
 (alinea sensores, beneficia a la red neuronal escalada). `match_pairs` usa el estado harmonizado si
 existe (`scene_state_harmonized.csv`).
 
+## CAPA OPERATIVA — SISTEMA DE ALERTA (2026-06-26)
+Se convirtió el predictor en un **sistema operativo de alerta** (sin tocar modelado ni números de
+validación; pronóstico causal intacto, solo datos ≤ t0). Reusa `predict.forecast_body` como **fuente
+única de inferencia** (la misma que `predict.py`), no duplica feature engineering.
+
+- **`guards.py`** — guardas de FRESCURA/COBERTURA compartidas (las usan `run_forecast` y `predict`):
+  - `STALE` si la escena t0 es más vieja que `config.MAX_DATA_AGE_DAYS` (default 14 d).
+  - `LOW_COVERAGE` si `n_water_px < config.MIN_WATER_PIXELS`.
+  - `EXPLORATORIO` si el cuerpo está en `config.EXPLORATORY_BODIES` (Cajón).
+  - El campo `confianza` reporta la **PEOR** condición aplicable (`config.CONFIDENCE_SEVERITY`,
+    orden peor→mejor: LOW_COVERAGE > STALE > EXPLORATORIO > OK). No silencia: marca.
+- **`run_forecast.py`** — bucle operativo: para cada cuerpo (`config.REGIONS`) × horizonte (1,3,5,7)
+  toma la última escena como t0 y emite chl-a esperada + banda P10–P90 (CQR) + prob/bandera de RIESGO
+  (ensamble Red+XGBoost) + `confianza`. Usa `logging` y **try/except por cuerpo** (si uno falla, loguea
+  y sigue). Escribe `artifacts/forecasts/forecast_<YYYYMMDD_HHMMSS>.csv` y `.json` (snapshot del run) y
+  **apenda** a `artifacts/forecasts/forecast_log.csv` (bitácora acumulada, una fila por cuerpo-horizonte-run).
+  Esquema: `run_ts, water_body, group, t0, horizon, chl_pred, p10, p90, prob_riesgo, riesgo, confianza,
+  data_age_days, n_water_px, modelo_meta`. Núcleo `build_rows` es **puro y testeable**. Modo opcional
+  `--backfill K` siembra la bitácora con pronósticos históricos madurables (para arrancar la verificación).
+- **`build_model_cards.py`** — model card por modelo, junto a los `.pkl` (`artifacts/models/model_cards.json`):
+  fecha de entrenamiento, nº de pares, commit git, features y skill validado anidado por (grupo,horizonte).
+  `run_forecast` lo incluye en `modelo_meta` (trazabilidad de cada pronóstico). No reentrena.
+- **`verify_forecasts.py`** — verificación operativa POSTERIOR (cierra el lazo, no entrena): cruza la
+  bitácora con `combined_target.csv`; para pronósticos ya madurados (target real t0+h disponible) calcula
+  error realizado (chl_pred vs chl_real), si cayó dentro de P10–P90 y si la bandera de riesgo acertó.
+  Salidas `artifacts/reports/forecast_verification.csv` + resumen por (grupo,horizonte): **MAE, cobertura
+  empírica de la banda, hit-rate de alerta**. Núcleo `verify` es **puro y testeable**.
+  Demostración (backfill 12/cuerpo): cobertura empírica de la banda **0.72–0.87** (≈0.80 objetivo CQR) →
+  el lazo operativo reproduce la calibración; MAE lagos crece con el horizonte (≈2→6 µg/L), costa ≈0.5 µg/L.
+- **`tests/`** (pytest, 16 tests, todos pasan): `test_guards.py` (frescura/cobertura/peor condición),
+  `test_run_forecast_schema.py` (esquema de salida con pronóstico sintético), `test_verify_forecasts.py`
+  (cruce/MAE/cobertura/hit-rate con caso sintético). `conftest.py` agrega la carpeta al path.
+- **`check_integrity.py`**: añadidos 3 checks estáticos de la capa operativa → **14/14 OK** (siguen los 11
+  de honestidad/causalidad; los 3 nuevos validan las guardas, sin datos ni torch → CI verde).
+
+Cómo operar: `python run_forecast.py` (emite y registra) · `python run_forecast.py --backfill 12` (siembra
+histórico) · `python verify_forecasts.py` (evalúa lo madurado) · `python build_model_cards.py` (refresca cards).
+
 ## QUÉ SIGUE (pendiente)
 Modelos en estado de defensa. Quedan, cuando el usuario lo indique (EN PAUSA): figuras, notebook
 limpio y redacción de tesis.
@@ -203,6 +241,15 @@ Figuras, notebook limpio que reemplace los viejos, redacción de tesis.
   con fuga; lo genera `build_notebook.py` y se ejecuta con nbconvert (20 celdas, 0 errores).
 - `era5_sensitivity.py` — **sensibilidad ERA5 reanálisis vs pronóstico** (ablación + ruido #5).
 - `train_final.py` / `predict.py` / `calibrate_alert.py` / `make_maps.py` — sistema desplegable.
+  `predict.py` expone `forecast_body(wb,t0)` (inferencia estructurada reutilizable).
+- `build_validation_figs.py` — figuras de validación (skill, intervalos, serie temporal, dispersión).
+- **Capa operativa de alerta** (2026-06-26):
+  - `guards.py` — guardas de frescura/cobertura/estado → etiqueta de `confianza`.
+  - `run_forecast.py` — bucle operativo (emite + bitácora `forecast_log.csv`); `--backfill K` siembra histórico.
+  - `verify_forecasts.py` — verificación posterior (MAE/cobertura banda/hit-rate alerta de lo madurado).
+  - `build_model_cards.py` — model cards (`artifacts/models/model_cards.json`) para trazabilidad.
+  - `tests/` — pytest de la capa operativa (guards, esquema, verificación). `conftest.py`.
 - `variables_modelo.txt` — lista de variables del modelo.
 - `README.md` — metodología y resultados.
-- `artifacts/` — datos procesados, modelos y reportes generados.
+- `artifacts/` — datos procesados, modelos y reportes generados; `artifacts/forecasts/` = snapshots +
+  bitácora de pronósticos operativos.
