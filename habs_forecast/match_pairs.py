@@ -205,6 +205,12 @@ def build():
     if len(df) < n0:
         print(f"  (quitados {n0 - len(df)} pares duplicados exactos)")
 
+    # ORDEN CANONICO determinista: XGBoost con subsample/colsample y seed fijo elige filas segun
+    # su POSICION; si el orden del DataFrame cambia (p.ej. al reconstruir con otro cuerpo), el mismo
+    # seed muestrea filas distintas -> modelo distinto -> skill que "baila" entre corridas. Ordenar
+    # de forma canonica (cuerpo, horizonte, fecha) hace el pipeline REPRODUCIBLE corrida a corrida.
+    df = df.sort_values(["water_body", "horizon", "fecha_t0", "fecha_target"]).reset_index(drop=True)
+
     os.makedirs(C.DIR_PAIRS, exist_ok=True)
     df.to_csv(OUT, index=False)
     print("\n=== umbral relativo por cuerpo (ug/L, P{}) ===".format(C.RELATIVE_PERCENTILE))

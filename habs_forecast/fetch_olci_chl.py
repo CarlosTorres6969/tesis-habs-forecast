@@ -35,7 +35,7 @@ BODIES = {
     "cajon":      (-87.80, 14.70, -87.58, 14.95, "freshwater"),
     "fonseca":    (-87.85, 12.90, -87.35, 13.45, "marine"),
 }
-T0, T1 = "2023-01-01", "2026-04-30"
+T0, T1 = "2023-01-01", "2026-06-30"
 
 # Coleccion y banda de clorofila en CDSE (verificar con list_collections si falla):
 COLLECTION = "SENTINEL3_OLCI_L2_WATER"
@@ -47,7 +47,7 @@ def build():
     con = openeo.connect("openeo.dataspace.copernicus.eu").authenticate_oidc()
 
     years = [("2023-01-01", "2023-12-31"), ("2024-01-01", "2024-12-31"),
-             ("2025-01-01", "2025-12-31"), ("2026-01-01", "2026-04-30")]
+             ("2025-01-01", "2025-12-31"), ("2026-01-01", "2026-06-30")]
     frames = []
     for name, (w, s, e, n, group) in BODIES.items():
         recs = []
