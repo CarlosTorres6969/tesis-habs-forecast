@@ -1,0 +1,59 @@
+================================================================================
+ VARIABLES USADAS PARA LA PREDICCION DE FLORACIONES ALGALES NOCIVAS (HABs)
+ Sistema de prediccion temprana 0-7 dias
+================================================================================
+
+1. VARIABLES ESPECTRALES (Sentinel-2, por escena)
+--------------------------------------------------------------------------------
+  B2                 Banda azul (493 nm)
+  B3                 Banda verde (560 nm)
+  B4                 Banda roja (665 nm)
+  B5                 Banda red-edge (705 nm)
+  B8                 Banda NIR / infrarrojo cercano (842 nm)
+  NDCI               Normalized Difference Chlorophyll Index (B5-B4)/(B5+B4)
+  CI_red             Chlorophyll Index red-edge (B5/B4 - 1)
+  FAI                Floating Algae Index (algas/nata flotante)
+  turbidity          Indice de turbidez (B4/B3)
+
+2. VARIABLES AUTORREGRESIVAS (clorofila reciente, causal <= t0)
+--------------------------------------------------------------------------------
+  log_chl_t0         Clorofila en t0 (log)
+  chl_lag3           Clorofila en t0-3 dias
+  chl_lag7           Clorofila en t0-7 dias
+  chl_roll7          Media movil de clorofila (7 dias)
+  chl_trend7         Tendencia de clorofila (t0 menos t0-7)
+
+3. VARIABLES CLIMATICAS (ERA5-Land)
+--------------------------------------------------------------------------------
+  temp_air_2m        Temperatura del aire a 2 m
+  solar_radiation    Radiacion solar (SSRD)
+  precipitation      Precipitacion (TP)
+  wind_speed_10m     Velocidad del viento a 10 m
+  surface_pressure   Presion superficial
+  temp_air_2m_roll7        Media movil 7 dias de temperatura del aire
+  solar_radiation_roll7    Media movil 7 dias de radiacion solar
+  precipitation_roll7      Media movil 7 dias de precipitacion
+  wind_speed_10m_roll7     Media movil 7 dias de velocidad del viento
+
+4. VARIABLES DE NUTRIENTES (in-situ, contexto)
+--------------------------------------------------------------------------------
+  tp_context         Fosforo total in-situ
+
+5. VARIABLES DE CALIDAD DE AGUA (in-situ, contexto)
+--------------------------------------------------------------------------------
+  water_temp         Temperatura del agua
+  do_mgl             Oxigeno disuelto
+  ph                 pH
+  turbidity_insitu   Turbidez in-situ
+  spec_cond          Conductividad especifica
+  secchi             Transparencia (disco Secchi)
+  ammonia            Amonio (NH4+/NH3) = forma de NITROGENO usada (la mas biodisponible)
+
+NOTA SOBRE EL NITROGENO:
+  El nitrogeno entra al modelo a traves del AMONIO (variable 'ammonia'), su forma mas
+  biodisponible para las algas. Otras formas (nitrogeno total, nitrato, Kjeldahl) NO se
+  incluyeron por falta de datos in-situ en 2023-2026 (casi sin mediciones en WQP).
+
+================================================================================
+ VARIABLE OBJETIVO: clorofila-a (ug/L) en t0+h, con h = 0, 1, 3, 5, 7 dias
+================================================================================

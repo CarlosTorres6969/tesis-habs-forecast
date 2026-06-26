@@ -1,0 +1,535 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\geometry{a4paper, margin=2.5cm}
+\usepackage{setspace}
+\onehalfspacing
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{float}
+\usepackage{array}
+\usepackage{ragged2e}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  breakatwhitespace=false,
+  breakautoindent=true,
+  postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
+  backgroundcolor=\color{gray!10},
+  frame=single,
+  numbers=left,
+  numberstyle=\tiny,
+  captionpos=b,
+  xleftmargin=0.5em,
+  xrightmargin=0.5em
+}
+
+\newcolumntype{L}{>{\RaggedRight\arraybackslash}X}
+\newcolumntype{P}[1]{>{\RaggedRight\arraybackslash}p{#1}}
+
+\newcommand{\tabcol}[1]{>{\RaggedRight\arraybackslash}p{#1}}
+\newlength{\descrwidth}
+\setlength{\descrwidth}{3.8cm}
+
+\title{Documento de Procedencia de Datos\\\small{Sistema de Predicci\'on Temprana de HABs}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+\newpage
+
+\section{Fuentes de Datos}
+
+\subsection{Sentinel-2 (ESA Copernicus)}
+\begin{tabular}{P{\descrwidth} P{\dimexpr\textwidth-\descrwidth-4\tabcolsep\relax}}
+\toprule
+\textbf{Agente:} & ESA Copernicus Data Space \\
+\midrule
+\textbf{Producto:} & S2MSI2A (Bottom-of-Atmosphere, BOA) \\
+\midrule
+\textbf{Bandas:} & B2 (493~nm), B3 (560~nm), B4 (665~nm), B5 (705~nm), B8 (842~nm) \\
+\midrule
+\textbf{Resoluci\'on espacial:} & 10--20~m (remuestreadas a 20~m) \\
+\midrule
+\textbf{Resoluci\'on temporal:} & 5 d\'ias \\
+\midrule
+\textbf{Proyecci\'on:} & UTM zona 17N (EPSG:32617) \\
+\midrule
+\textbf{Formato:} & GeoTIFF, 16-bit sin signo \\
+\midrule
+\textbf{Periodo:} & 2023 a 2026 \\
+\midrule
+\textbf{Regiones:} & Okeechobee, TampaBay, Golfo de Fonseca, Lago de Yojoa, Embalse El Caj\'on \\
+\midrule
+\textbf{Directorio base:} & \texttt{imagenes/\{Region\}/\{A\~no\}/} \\
+\bottomrule
+\end{tabular}
+
+\textbf{Preprocesamiento:} Las bandas se normalizan dividiendo por 10000 cuando el valor m\'aximo supera 1.5. A partir de las 5 bandas se calculan 6 \'indices espectrales: NDCI, NDVI, FAI, B5/B4, B3/B2, B8/B3.
+
+\subsection{ERA5-Land (Copernicus Climate Data Store)}
+\begin{tabular}{P{\descrwidth} P{\dimexpr\textwidth-\descrwidth-4\tabcolsep\relax}}
+\toprule
+\textbf{Agente:} & ECMWF / Copernicus CDS \\
+\midrule
+\textbf{API:} & CDS API v3 (\texttt{cdsapi} Python) \\
+\midrule
+\textbf{Dataset:} & \texttt{reanalysis-era5-land} \\
+\midrule
+\textbf{Resoluci\'on espacial:} & $0.1^\circ \times 0.1^\circ$ ($\sim$9~km) \\
+\midrule
+\textbf{Resoluci\'on temporal:} & 4 horaria (00, 06, 12, 18 UTC) \\
+\midrule
+\textbf{Extensi\'on:} & Lat 31.25$^\circ$N a 14.5$^\circ$N, Lon 88.5$^\circ$W a 79.75$^\circ$W \\
+\midrule
+\textbf{Variables instant\'aneas:} & t2m, u10, v10, sp \\
+\midrule
+\textbf{Variables acumuladas:} & ssrd, tp \\
+\midrule
+\textbf{Periodo:} & 2023-01 a 2026-05 \\
+\midrule
+\textbf{Archivos:} & 211 NetCDF, 219~MB total \\
+\midrule
+\textbf{Directorio:} & \texttt{era5\_temp\_nc/} \\
+\bottomrule
+\end{tabular}
+
+\textbf{Extracci\'on:} Se extrae el valor a las 12:00 UTC (\'indice 2 del bloque 4-horario) para cada muestra. Para el an\'alisis de predicci\'on temprana se extraen adem\'as valores en t-1, t-3, t-5 y t-7 d\'ias desde la misma cuadr\'icula ERA5.
+
+\subsection{MODIS Aqua CHL (NASA Ocean Color)}
+\begin{tabular}{P{\descrwidth} P{\dimexpr\textwidth-\descrwidth-4\tabcolsep\relax}}
+\toprule
+\textbf{Agente:} & NASA Ocean Color Web (\texttt{oceancolor.gsfc.nasa.gov}) \\
+\midrule
+\textbf{Producto:} & MODIS Aqua L3m CHL mensual, 4~km \\
+\midrule
+\textbf{Algoritmo:} & OC3M/OCI combinado (chlor\_a) \\
+\midrule
+\textbf{Periodo:} & 2023-01 a 2026-05 \\
+\midrule
+\textbf{Regiones:} & Golfo de Fonseca, Lago de Yojoa, Embalse El Caj\'on \\
+\midrule
+\textbf{Formato:} & NetCDF \\
+\midrule
+\textbf{Cobertura v\'alida:} & Golfo de Fonseca: 35/41 meses con CHL $>$ 0 \\
+& Lago de Yojoa: 6/41 meses con CHL $>$ 0 \\
+& El Caj\'on: 0/41 meses (embalse angosto, no resuelto por 4~km) \\
+\midrule
+\textbf{Nota:} & 2026 no produjo valores v\'alidos en ninguna estaci\'on hondure\~na \\
+\bottomrule
+\end{tabular}
+
+\subsection{WQP Chlorophyll (EPA/USGS)}
+\begin{tabular}{P{\descrwidth} P{\dimexpr\textwidth-\descrwidth-4\tabcolsep\relax}}
+\toprule
+\textbf{Agente:} & Water Quality Portal (\texttt{www.waterqualitydata.us}) \\
+\midrule
+\textbf{API:} & REST (\texttt{dataRetrieval} R / \texttt{wqptoolbox}) \\
+\midrule
+\textbf{Par\'ametro:} & Chlorophyll a (00665, 70960) \\
+\midrule
+\textbf{Unidades:} & ug/L y mg/m$^3$ \\
+\midrule
+\textbf{Organizaciones:} & STF\_WQX (South Florida Water Management), UWFCEDB (Univ. West Florida) \\
+\midrule
+\textbf{Periodo:} & 2023 a 2026 \\
+\midrule
+\textbf{Registro v\'alido:} & 59 muestras en 2025, 7 en 2026 (Panhandle de Florida) \\
+\midrule
+\textbf{Archivo:} & \texttt{datasets/florida/\-florida\_chlorophyll\-\_wqp\_2025\_2026.csv} \\
+\midrule
+\textbf{Nota:} & Las muestras de 2026 (Panhandle) no se emparejaron con Sentinel-2 por falta de im\'agenes en esa zona \\
+\bottomrule
+\end{tabular}
+
+\section{Scripts y Pipeline}
+
+Todos los scripts se ejecutaron en Windows 11 con PowerShell 5.1 y Python 3.13, ocupando GPU NVIDIA CUDA para el entrenamiento de redes neuronales.
+
+\subsection{\texttt{calibrar\_chl\_s2.py}}
+\textbf{Prop\'osito:} Entrenar modelo RandomForest para estimar clorofila desde Sentinel-2. Usa 193 muestras reales con clorofila in-situ.
+
+\textbf{C\'odigo:}
+\begin{lstlisting}[language=Python]
+F_CHL = ["B2","B3","B4","B5","B8","NDCI","NDVI","FAI",
+         "B5_B4_ratio","B3_B2_ratio","B8_B3_ratio"]
+chl_log = np.log10(np.maximum(chl, 0.1))
+
+rf_chl = RandomForestRegressor(
+    n_estimators=300, max_depth=10,
+    min_samples_leaf=3, random_state=RND, n_jobs=-1
+)
+rf_chl.fit(X, chl_log)
+
+pred_chl = 10 ** rf_chl.predict(X)
+pickle.dump({"model": rf_chl, "features": F_CHL}, f)
+\end{lstlisting}
+
+\textbf{Ejecuci\'on:}
+\begin{lstlisting}
+python scripts/calibrar_chl_s2.py
+\end{lstlisting}
+
+\textbf{M\'etricas obtenidas:}
+\begin{itemize}
+  \item Pearson r: 0.85 (p $<$ 0.001)
+  \item Spearman $\rho$: 0.91 (p $<$ 0.001)
+  \item MAE: 6.70~ug/L
+\end{itemize}
+\textbf{Output:} \texttt{modelo\_final\_2023/rf\_chl\_estimator.pkl}
+
+\subsection{\texttt{apply\_chl\_2026.py}}
+\textbf{Prop\'osito:} Aplicar el estimador de clorofila a im\'agenes Sentinel-2 de 2026 y extraer ERA5. Genera 1,342 muestras sint\'eticas.
+
+\textbf{C\'odigo (carga ERA5 y predicci\'on):}
+\begin{lstlisting}[language=Python]
+def load_era5_month(y, m):
+    vt = ds_i.valid_time.values
+    mask = np.array([t.hour == 12
+                     for t in pd.DatetimeIndex(vt)])
+    t2m = ds_i.t2m.values[mask]
+    # ... same for sp, u10, v10, ssrd, tp
+    wspd = np.sqrt(u10**2 + v10**2)
+    return {"t2m": t2m, "sp": sp, "wspd": wspd, ...}
+
+def get_era5_bulk(fecha, lat, lon, cache):
+    day = fecha.day - 1
+    ilat = np.argmin(np.abs(d["lats"] - lat))
+    ilon = np.argmin(np.abs(d["lons"] - lon))
+    return {"temp_air_2m": float(d["t2m"][day,ilat,ilon]),
+            "solar_radiation": float(d["ssrd"][day,ilat,ilon]),
+            "precipitation": float(d["tp"][day,ilat,ilon]),
+            "wind_speed_10m": float(d["wspd"][day,ilat,ilon]),
+            ...}
+\end{lstlisting}
+
+\textbf{C\'odigo (submuestreo de p\'ixeles):}
+\begin{lstlisting}[language=Python]
+step = max(1, int(np.sqrt(H * W / 5000)))
+b_sub = b[:, ::step, ::step]
+bf = b_sub.reshape(5, -1).T
+water = bf.sum(1) > 0
+idxs = np.random.choice(water.sum(), SAMPLES_PER_TILE, replace=False)
+
+for idx in idxs:
+    utm_x, utm_y = tr * (col + step//2, row + step//2)
+    # UTM -> WGS84
+    lon, lat = rio_transform(
+        crs_src, {"init": "EPSG:4326"}, [utm_x], [utm_y])
+    chl_est = float(10 ** rf_chl.predict(
+        feats.reshape(1, -1))[0])
+    era = get_era5_bulk(fecha, lat, lon, era_cache)
+\end{lstlisting}
+
+\textbf{Ejecuci\'on:}
+\begin{lstlisting}
+python scripts/apply_chl_2026.py
+\end{lstlisting}
+\textbf{Output:} \texttt{datasets/samples\_2026\_s2\_chl.csv} (1,342 muestras)
+
+\subsection{\texttt{lead\_time\_era5.py}}
+\textbf{Prop\'osito:} Extraer ERA5 de t-1, t-3, t-5, t-7 d\'ias para cada muestra, demostrando predicci\'on temprana.
+
+\textbf{C\'odigo:}
+\begin{lstlisting}[language=Python]
+LEADS = [("t0", 0), ("t-1", -1), ("t-3", -3),
+         ("t-5", -5), ("t-7", -7)]
+ERA_VARS = ["temp_air_2m","solar_radiation",
+            "precipitation","wind_speed_10m",
+            "wind_u_10m","wind_v_10m",
+            "surface_pressure"]
+
+for lead_name, lead_days in LEADS:
+    lead_fecha = fecha + pd.Timedelta(days=lead_days)
+    era = get_era5_at(lead_fecha, lat, lon)
+    for v in ERA_VARS:
+        entry[f"{v}_{lead_name}"] = era[v]
+\end{lstlisting}
+
+\textbf{Ejecuci\'on:}
+\begin{lstlisting}
+python scripts/lead_time_era5.py
+\end{lstlisting}
+\textbf{Output:} \texttt{datasets/lead\_time\_era5.csv} (ERA5 multi-lead para 1,342 muestras)
+
+\subsection{\texttt{clean\_concat.py}}
+\textbf{Prop\'osito:} Unir datasets hist\'oricos (2023--2025) con las nuevas muestras de 2026 en un \'unico CSV.
+
+\textbf{C\'odigo:}
+\begin{lstlisting}[language=Python]
+original = full_ds[(full_ds["fecha"].dt.year >= 2023) &
+                   (full_ds["fecha"].dt.year <= 2025) &
+                   full_ds["temp_air_2m"].notna()].copy()
+s26 = pd.read_csv("datasets/samples_2026_s2_chl.csv")
+s26 = s26[s26["temp_air_2m"].notna()].copy()
+
+full = pd.concat([original_out, s26_out], ignore_index=True)
+full = full.sort_values("fecha").reset_index(drop=True)
+full.to_csv("datasets/dataset_entrenamiento_completo_2023_2026.csv", index=False)
+\end{lstlisting}
+
+\textbf{Ejecuci\'on:}
+\begin{lstlisting}
+python scripts/clean_concat.py
+\end{lstlisting}
+\textbf{Output:} \texttt{datasets/dataset\_entrenamiento\_completo\_2023\_2026.csv}
+
+\section{C\'odigo de Modelos (Notebook)}
+El notebook \texttt{Modelo\_tesis.ipynb} contiene todo el pipeline de entrenamiento, evaluaci\'on y generaci\'on de mapas.
+
+\subsection{HABNet1Dv2 (Arquitectura)}
+\begin{lstlisting}[language=Python]
+class HABNet1Dv2(torch.nn.Module):
+    def __init__(self, nf, h=128, nr=2, d=0.2):
+        super().__init__()
+        self.input_proj = nn.Sequential(
+            nn.Linear(nf,h), nn.BatchNorm1d(h),
+            nn.GELU(), nn.Dropout(d))
+        self.res_blocks = nn.ModuleList([
+            nn.Sequential(nn.Linear(h,h), nn.BatchNorm1d(h),
+                nn.GELU(), nn.Dropout(d),
+                nn.Linear(h,h), nn.BatchNorm1d(h))
+            for _ in range(nr)])
+        self.se = nn.Sequential(
+            nn.Linear(h,max(h//4,8)), nn.ReLU(),
+            nn.Linear(max(h//4,8),h), nn.Sigmoid())
+        self.classifier = nn.Sequential(
+            nn.Linear(h,h//2), nn.GELU(),
+            nn.Dropout(d*.5), nn.Linear(h//2,1))
+    def forward(self, x):
+        x = self.input_proj(x)
+        for b in self.res_blocks:
+            x = x + b(x)  # residual connection
+        return self.classifier(x * self.se(x))
+\end{lstlisting}
+
+\subsection{Entrenamiento (5-Fold CV + Hold-Out)}
+\begin{lstlisting}[language=Python]
+skf = StratifiedKFold(5, shuffle=True, random_state=RND)
+for f, (ti, vi) in enumerate(skf.split(X, y)):
+    dl_tr = DataLoader(TensorDataset(
+        tensor(X_tr_s), tensor(y_tr).unsqueeze(1)), 32, True)
+    dl_te = DataLoader(TensorDataset(
+        tensor(X_te_s), tensor(y_te).unsqueeze(1)), 32, False)
+    m = HABNet1Dv2(len(F)).to(DEVICE)
+    o = optim.AdamW(m.parameters(), lr=1e-3, weight_decay=1e-4)
+    s = CosineAnnealingLR(o, 100, 1e-5)
+    c = FocalLoss(a=.25, g=2, pw=tensor([pw]).to(DEVICE))
+    for ep in range(200):
+        for xb, yb in dl_tr:
+            o.zero_grad()
+            c(m(xb.to(DEVICE)), yb.to(DEVICE)).backward()
+            clip_grad_norm_(m.parameters(), 1)
+            o.step()
+        # early stopping si no mejora en 25 epochs
+        if va > ba: ba = va; es = 0
+        else: es += 1
+        if es >= 25: break
+\end{lstlisting}
+
+\subsection{XGBoost (Configuraci\'on)}
+\begin{lstlisting}[language=Python]
+pw_xgb = int((y_tr == 0).sum()) / max(int(y_tr.sum()), 1)
+xgb_m = xgb.XGBClassifier(
+    n_estimators=300, max_depth=6, learning_rate=.05,
+    subsample=.8, colsample_bytree=.8,
+    scale_pos_weight=pw_xgb, random_state=RND,
+    device='cuda', tree_method='hist', verbosity=0)
+xgb_m.fit(X_tr_s, y_tr)
+xgb_m.save_model("modelo_final_2023/xgb_model.json")
+\end{lstlisting}
+
+\subsection{Generaci\'on de Mapas (\texttt{proc\_tif})}
+\begin{lstlisting}[language=Python]
+def proc_tif(path, dom, st=20):
+    with rasterio.open(path) as s:
+        b = s.read().astype('float32') / 10000.
+        pr, tr = s.profile, s.transform
+    if st > 1: b = b[:, ::st, ::st]
+    bf = b.reshape(5, -1).T
+    v = bf.sum(1) > 0  # solo pixeles con agua
+    Xs = feats({sb: bv[:,i] for i,sb in enumerate(S2)})
+    if dom != 'Florida': Xs += shift  # domain adaptation
+    Xf = np.column_stack([Xs, np.full((len(Xs),len(ERA_M)),ERA_M)])
+    p = xgb_m.predict_proba(sc.transform(Xf.astype('float64')))[:,1]
+    pm = np.zeros((H, W), 'float32')
+    pm.flat[v] = p
+    return pm, pr, tr
+\end{lstlisting}
+
+\textbf{Domain Adaptation:} El archivo \texttt{yojoa\_s2\_matched.csv} contiene firmas espectrales de muestras en Lago de Yojoa. Se calcula \texttt{spectral\_shift.npy} como la diferencia entre la media espectral de Florida y la media de Yojoa, y se suma a las bandas de Honduras durante la generaci\'on de mapas. Adicionalmente existe \texttt{spectral\_adaptation.pkl} (z-score), generado en experimentos previos. El m\'etodo usado en el pipeline final es el desplazamiento aditivo (\texttt{spectral\_shift.npy}).
+
+\section{Validaciones}
+
+\subsection{Validaci\'on Cruzada (5-Fold Stratified)}
+\begin{table}[H]
+\centering
+\begin{tabular}{cr}
+\toprule
+Fold & AUC \\
+\midrule
+1 & 0.9813 \\
+2 & 0.9844 \\
+3 & 0.9800 \\
+4 & 0.9795 \\
+5 & 0.9811 \\
+\midrule
+\text{Media} & 0.9813 $\pm$ 0.002 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Hold-Out (80/20)}
+\begin{table}[H]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Modelo & AUC & F1 & Accuracy \\
+\midrule
+HABNet1Dv2 & 0.9861 & 0.8871 & 0.9419 \\
+XGBoost & \textbf{0.9948} & \textbf{0.9498} & \textbf{0.9730} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Correlaci\'on con Clorofila in-situ (n = 2,424)}
+\begin{align*}
+\text{HABNet1Dv2:} &\quad r = 0.7314,\ \rho = 0.6247 \\
+\text{XGBoost:} &\quad r = 0.7471,\ \rho = 0.7709 \\
+\text{CHL HAB:} &\quad 22.8\ \mu\text{g/L} \\
+\text{CHL No-HAB:} &\quad 5.4\ \mu\text{g/L}
+\end{align*}
+
+\subsection{Estabilidad Temporal (AUC por a\~no)}
+\begin{table}[H]
+\centering
+\begin{tabular}{crrl}
+\toprule
+A\~no & Muestras & HAB & XGBoost AUC \\
+\midrule
+2023 & 118 & 51 & 0.9918 \\
+2024 & 53 & 2 & 1.0000 \\
+2025 & 1194 & 306 & 1.0000 \\
+2026 & 1044 & 281 & 0.9985 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Predicci\'on Temprana (Lead-Time)}
+Evaluaci\'on del modelo XGBoost entrenado, substituyendo ERA5 real por ERA5 de d\'ias anteriores. Las bandas espectrales S2 se mantienen fijas.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{crrrr}
+\toprule
+Lead & n & AUC HABNet & AUC XGBoost & Pearson XGB \\
+\midrule
+t0 (real) & 1342 & 0.9385 & 0.9747 & 0.7960 \\
+t-1 & 1342 & 0.9370 & 0.9737 & 0.7896 \\
+t-3 & 1342 & 0.9377 & 0.9732 & 0.7976 \\
+t-5 & 1342 & 0.9351 & 0.9747 & 0.7870 \\
+t-7 & 1342 & 0.9401 & \textbf{0.9754} & 0.7974 \\
+\bottomrule
+\end{tabular}
+\caption{El AUC de XGBoost no se degrada al usar ERA5 de hasta 7 d\'{\i}as antes. Esto valida que el sistema puede operar con pron\'ostico clim\'atico en lugar de ERA5 real.}
+\end{table}
+
+\subsection{Perturbaci\'on ERA5: real vs promedio}
+\begin{align*}
+\text{Real:} &\quad \text{HABNet AUC}=0.9956,\ \text{XGB AUC}=0.9993 \\
+\text{Promedio:} &\quad \text{HABNet AUC}=0.4824,\ \text{XGB AUC}=0.9922 \\
+\text{Cambio medio HABNet:} &\quad 0.3893 \\
+\text{Cambio medio XGBoost:} &\quad 0.0447
+\end{align*}
+El XGBoost es robusto al uso de ERA5 promedio, mientras que HABNet1Dv2 colapsa. Por esta raz\'on, XGBoost es el modelo recomendado para la generaci\'on de mapas.
+
+\section{Dataset Final}
+
+\begin{table}[H]
+\centering
+\sloppy
+\begin{tabular}{P{\descrwidth} P{\dimexpr\textwidth-\descrwidth-4\tabcolsep\relax}}
+\toprule
+Muestras totales & 2,424 (645 HAB, 26.6\%) \\
+\midrule
+Eventos HAB & 645 (26.6\%) \\
+\midrule
+Periodo & 2023-01 a 2026-05 \\
+\midrule
+Variables espectrales & 11 (5 bandas + 6 \'indices) \\
+\midrule
+Variables clim\'aticas & 7 (ERA5) \\
+\midrule
+Origenes & golfo\_fonseca (1,422), florida (726), lago\_de\_yojoa (140), caj\'on (136) \\
+\midrule
+Archivo & \texttt{datasets/dataset\_entrenamiento\_completo\_2023\_2026.csv} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Estructura de Archivos}
+{\scriptsize
+\begin{lstlisting}
+C:\Users\JC\Desktop\Tesis\
++-- Modelo_tesis.ipynb
++-- datasets/
+|   +-- dataset_entrenamiento_completo_2023_2026.csv
+|   +-- lead_time_era5.csv
+|   +-- samples_2026_s2_chl.csv
+|   +-- honduras_modis_chl_monthly.csv
+|   +-- florida/
+|       +-- ..._wqp_2025_2026.csv
+|       +-- florida_s2_matched.csv
++-- imagenes/
+|   +-- {Okeechobee,TampaBay,Cajon,
+|        Golfo_Fonseca,Lago de Yojoa}/
+|       +-- {2023,2024,2025,2026}/*.tif
++-- era5_temp_nc/   (211 archivos)
++-- modelo_final_2023/
+|   +-- best_model.pth           (357 KB) HABNet final
+|   +-- habnet1d_v2_temporal.pt  (360 KB) HABNet temp
+|   +-- habnet1d_v2_final.pt     (357 KB) HABNet final alt
+|   +-- xgb_model.json           (815 KB) XGBoost final
+|   +-- xgboost_final.pkl        (278 KB) XGBoost final alt
+|   +-- xgb_temporal.pkl         (443 KB) XGBoost temporal
+|   +-- scaler.pkl               StandardScaler
+|   +-- scaler_final.pkl         StandardScaler alt
+|   +-- scaler_temporal.pkl      StandardScaler temp
+|   +-- rf_chl_estimator.pkl     (1.5 MB) RF CHL
+|   +-- spectral_shift.npy       Domain adaptation shift
+|   +-- spectral_adaptation.pkl  Domain adaptation z-score
+|   +-- summary_final.json       Metrics final
+|   +-- summary_temporal.json    Metrics temporal
+|   +-- roc_final.png, roc_temporal.png
++-- mapas_finales/
+|   +-- *_hab_final.tif   (867 mapas)
++-- scripts/
+    +-- calibrar_chl_s2.py   # RF CHL estimator
+    +-- apply_chl_2026.py    # 2026 sample generation
+    +-- lead_time_era5.py    # Multi-lead ERA5
+    +-- clean_concat.py      # Dataset consolidation
+    +-- concat_2026.py       # Alt. concatenation script
+\end{lstlisting}
+}
+
+\section*{Resumen de Ejecuci\'on}
+
+Todos los scripts se ejecutaron en el siguiente orden:
+\begin{enumerate}
+  \item \texttt{calibrar\_chl\_s2.py} (RF CHL, Pearson r=0.85)
+  \item \texttt{apply\_chl\_2026.py} (1,342 muestras 2026)
+  \item \texttt{lead\_time\_era5.py} (ERA5 t-1 a t-7)
+  \item \texttt{clean\_concat.py} (dataset final 2,424 muestras)
+  \item \texttt{Modelo\_tesis.ipynb} (entrenamiento, mapas, predicci\'on temprana)
+\end{enumerate}
+
+\end{document}
