@@ -1,0 +1,184 @@
+================================================================================
+ DESCRIPCION DE ARCHIVOS - SISTEMA DE DETECCION DE HABs
+ Proyecto: Tesis - Floraciones Algales Nocivas (HABs)
+================================================================================
+
+========================================================================
+ RAIZ
+========================================================================
+Modelo_tesis.ipynb        Notebook principal. Pipeline completo:
+                          1. Carga de datos Florida 2023-2026
+                          2. Definicion de HABNet1Dv2 (residual + SE attention)
+                          3. Entrenamiento 5-fold Stratified CV
+                          4. Hold-out: HABNet1Dv2 vs XGBoost
+                          5. Domain adaptation Florida -> Honduras
+                          6. Generacion de mapas de probabilidad HAB
+                          7. Resumen final
+
+Modelo_validacion.ipynb   Notebook de validacion. Correlacion entre
+                          probabilidad HAB y clorofila in-situ.
+                          Graficos de dispersion, ROC, analisis por
+                          umbrales de eutrofizacion.
+
+========================================================================
+ datasets/                 DATOS DE ENTRENAMIENTO
+========================================================================
+dataset_entrenamiento_con_clima.csv   Dataset PRINCIPAL. 798 muestras,
+                         21 columnas: fecha, lat, lon, clorofila, B2-B8,
+                         indices espectrales, clima ERA5, etiqueta HAB.
+                         Combinacion de Florida + Honduras (pre-2023).
+
+dataset_entrenamiento.csv             Version anterior del dataset SIN
+                         variables climaticas ERA5. Reemplazado por
+                         el archivo _con_clima.csv.
+
+location_lat_longs_YOJOA.csv          Coordenadas de estaciones de
+                         muestreo en el Lago de Yojoa.
+
+Secchi_completedataset.csv            Datos historicos de disco Secchi
+                         (transparencia del agua) para Honduras.
+
+yojoa_era5_data.csv                   Datos climaticos ERA5-Land para
+                         Yojoa. 50 variables, 1950-2023, 1 ubicacion.
+                         (~20 MB) NO usado en modelo final por falta
+                         de datos equivalentes para Florida.
+
+yojoa_point_LS89_C2_SRST_...csv       Firmas espectrales Sentinel-2
+                         extraidas para puntos de muestreo en Yojoa
+                         (archivo crudo de descarga).
+
+yojoa_s2_matched.csv                  Firmas espectrales Sentinel-2
+                         emparejadas con fechas de muestreo en Yojoa.
+                         USADO para domain adaptation (calcular
+                         spectral shift Florida -> Yojoa).
+
+datasets/florida/
+  florida_chlorophyll_wqp.csv         Datos crudos de clorofila en
+                         Florida descargados de Water Quality Portal.
+  florida_chlorophyll_limpio.csv      Version limpia/filtrada de los
+                         datos de clorofila de Florida.
+  florida_s2_matched.csv              Firmas espectrales Sentinel-2
+                         emparejadas con fechas de muestreo en Florida.
+
+datasets/rios/
+  honduras_chlorophyll_wqp.csv        Datos de clorofila para rios
+                         de Honduras desde WQP.
+
+========================================================================
+ era5_temp_nc/            DATOS CLIMATICOS CRUDOS (NetCDF)
+========================================================================
+era5_accum_YYYY_MM.nc    83 archivos. Datos ERA5-Land acumulados
+                         (precipitacion, etc.) mensuales 2016-2024.
+
+era5_instant_YYYY_MM.nc  83 archivos. Datos ERA5-Land instantaneos
+                         (temperatura, viento, presion, etc.)
+                         mensuales 2016-2024.
+
+Fuente: Copernicus CDS API. NO usados directamente en modelo final
+(se uso el CSV ya procesado). Conservados por si se requiere extraer
+ERA5 para fechas especificas de GeoTIFFs.
+
+========================================================================
+ imagenes/                IMAGENES SATELITALES (SENTINEL-2)
+========================================================================
+~40 GB. 888 archivos GeoTIFF con 5 bandas espectrales (B2, B3, B4,
+B5, B8) a 20m de resolucion. Organizados por region y ano.
+
+Cada archivo nombrado como: S2_{Region}_{Ano}_{Fecha}_{ID}.tif
+
+Regiones (5):
+  Okeechobee/        509 tiles - Lago Okeechobee, Florida
+  TampaBay/           83 tiles - Bahia de Tampa, Florida
+  Cajon/              79 tiles - Embalse El Cajon, Honduras
+  Golfo_Fonseca/     139 tiles - Golfo de Fonseca, Honduras
+  Lago de Yojoa/      78 tiles - Lago de Yojoa, Honduras
+
+Rango temporal: 2023-01 a 2026-05.
+
+Estas imagenes son la MATERIA PRIMA del modelo. De ellas se extraen
+las 5 bandas espectrales, se calculan indices (NDCI, NDVI, FAI, etc.)
+y se genera el mapa de probabilidad HAB pixel por pixel.
+
+========================================================================
+ mapas_finales/           MAPAS DE PROBABILIDAD HAB (FINALES)
+========================================================================
+868 archivos GeoTIFF. Cada uno es un mapa de probabilidad HAB (0-1)
+generado por el modelo XGBoost final (conservador).
+
+Nombrado como: S2_{Region}_{Fecha}_{ID}_hab_final.tif
+
+Por region:
+  Okeechobee:   269 mapas  |  Cajon:         18 mapas
+  TampaBay:      67 mapas  |  Golfo Fonseca: 67 mapas
+                           |  Yojoa:         79 mapas
+
+Incluye ademas:
+  resumen.csv        - Tabla resumen: region, fecha, % HAB por tile
+
+NOTA: Usa ERA5 promedio (no real). El modelo HABNet1Dv2 colapsa a
+prob=0 con ERA5 promedio, por eso estos mapas usan XGBoost.
+
+========================================================================
+ mapas_hab_florida/      MAPAS HAB DE FLORIDA (VERSION ANTERIOR)
+========================================================================
+608 mapas. Generados con el modelo anterior (mas agresivo).
+Incluye serie de tiempo (time_series_hab.png).
+Conservados para comparacion.
+
+========================================================================
+ mapas_hab_honduras/     MAPAS HAB DE HONDURAS (VERSION ANTERIOR)
+========================================================================
+280 mapas. Generados con el modelo anterior (mas agresivo).
+Incluye resumen CSV, graficos de distribucion y series de tiempo
+por region (Cajon, Golfo Fonseca, Yojoa).
+Conservados para comparacion.
+
+========================================================================
+ modelo_final_2023/      MODELOS ENTRENADOS
+========================================================================
+habnet1d_v2_final.pt     HABNet1Dv2 v3 (reentrenado con aumento ERA5).
+                         Arquitectura: 128->ResBlockx2->SE->64->1
+                         Entrenado con Focal Loss + aumento ERA5 (p=0.25)
+                         Metricas: AUC real=0.996, AUC mean=0.810
+
+xgboost_final.pkl        XGBoost final. 300 arboles, max_depth=6.
+                         Escalamiento de peso positivo (HAB).
+                         Metricas: AUC real=0.959, AUC mean=0.810
+
+scaler_final.pkl         StandardScaler ajustado en train set.
+                         18 features escaladas a media 0, std 1.
+
+spectral_shift.npy       Vector de 11 elementos. Diferencia de medias
+                         espectrales Florida - Yojoa. Se SUMA a los
+                         features espectrales de Honduras durante
+                         inferencia para adaptacion de dominio.
+
+spectral_adaptation.pkl  Objeto con estadisticas espectrales por lago
+                         para domain adaptation.
+
+summary_final.json       Resumen de metricas del modelo final.
+roc_final.png             Grafico ROC comparativo HABNet1Dv2 vs XGBoost.
+comparacion_regiones.png  Comparacion de distribucion HAB entre regiones.
+fl_stats.json             Estadisticas del dataset Florida.
+
+========================================================================
+ validacion_mapas/       RESULTADOS DE VALIDACION
+========================================================================
+validacion_chl_vs_prob.png   Grafico principal: probabilidad HAB vs
+                             clorofila in-situ para 182 muestras.
+
+validacion_Okeechobee.png    Validacion por region: Okeechobee.
+validacion_TampaBay.png      Validacion por region: Tampa Bay.
+validacion_Lago_de_Yojoa.png Validacion por region: Yojoa.
+validacion_auc_por_region.png AUC de validacion por region.
+
+resumen_validacion.json      Metricas: Pearson, Spearman, AUC.
+resumen_validacion_regiones.json Metricas desglosadas por region.
+predicciones_por_region.csv   Predicciones del modelo por region.
+validacion_por_region.csv     Resultados de validacion por region.
+extraccion_puntos.csv         Puntos de muestreo con firmas espectrales
+                              extraidas de GeoTIFFs.
+
+================================================================================
+ TOTAL: 9 directorios, ~2,500 archivos, ~40 GB
+================================================================================

@@ -1,0 +1,187 @@
+===============================================================================
+ BANDAS ESPECTRALES SENTINEL-2 - Sistema de Deteccion de HABs
+ Proyecto: Tesis - Floraciones Algales Nocivas (HABs)
+===============================================================================
+
+1. BANDAS UTILIZADAS EN EL MODELO
+===============================================================================
+
+Las imagenes satelitales (GeoTIFFs) contienen 5 bandas del sensor 
+Sentinel-2 MSI (MultiSpectral Instrument), Level-2A (Bottom of Atmosphere):
+
+  Banda    Longitud de onda (nm)    Nombre         Resolucion
+  ------   ---------------------    -------------   ----------
+  B2       493                      Azul           10 m (remuestreado a 20 m)
+  B3       560                      Verde          10 m (remuestreado a 20 m)
+  B4       665                      Rojo           10 m (remuestreado a 20 m)
+  B5       705                      Red-edge       20 m
+  B8       842                      NIR (NIR)      10 m (remuestreado a 20 m)
+
+  Las 5 bandas vienen en un solo GeoTIFF de 5 capas, en ese orden:
+    Capa 1 = B2, Capa 2 = B3, Capa 3 = B4, Capa 4 = B5, Capa 5 = B8
+
+  Valores: enteros sin signo de 16 bits (0 - 10000), en unidades de
+  reflectancia * 10000. Para obtener reflectancia real: dividir entre 10000.
+
+
+2. COMPOSICION RGB (IMAGEN DE COLOR REAL)
+===============================================================================
+
+Para visualizar el GeoTIFF como una foto satelital normal, se asignan:
+
+  Canal Rojo   = B4 (665 nm)
+  Canal Verde  = B3 (560 nm)
+  Canal Azul   = B2 (493 nm)
+
+  En QGIS: Propiedades de capa -> Simbologia -> Renderizador "Multiband color"
+    Rojo  = Banda 4
+    Verde = Banda 3
+    Azul  = Banda 2
+
+  NOTA: No usar B5 (red-edge) como canal rojo — aunque esta en el espectro
+  del rojo, el ojo humano no lo percibe como tal, y la imagen se ve oscura.
+
+
+3. INDICES ESPECTRALES CALCULADOS POR EL MODELO
+===============================================================================
+
+El modelo no usa las bandas crudas directamente. Primero calcula estos
+6 indices espectrales a partir de las 5 bandas:
+
+  3.1. NDCI (Normalized Difference Chlorophyll Index)
+  -----------------------------------------------------------------------
+  Formula:  (B5 - B4) / (B5 + B4 + 1e-10)
+  Rango:   -1 a 1
+  Utilidad: El indice MAS IMPORTANTE para deteccion de HABs.
+             Detecta clorofila-a en aguas continentales y costeras.
+             Valores altos (> 0) indican presencia de clorofila.
+             Desarrollado por Mishra & Mishra (2012) para
+             floraciones algales en aguas interiores.
+
+  3.2. NDVI (Normalized Difference Vegetation Index)
+  -----------------------------------------------------------------------
+  Formula:  (B8 - B4) / (B8 + B4 + 1e-10)
+  Rango:   -1 a 1
+  Utilidad: Clasico indice de vegetacion. Detecta floraciones
+             superficiales densas (tapetes de cianobacterias).
+             Agua clara tiene NDVI negativo o cercano a 0.
+             Floraciones densas tienen NDVI positivo.
+
+  3.3. FAI (Floating Algae Index)
+  -----------------------------------------------------------------------
+  Formula:  B8 - (B4 + (B5 - B4) * (833 - 665) / (705 - 665))
+            donde 833, 665 y 705 son las longitudes de onda centrales
+            de B8, B4 y B5 respectivamente.
+  Utilidad: Disenado especificamente para detectar algas flotantes
+             (cianobacterias) en la superficie del agua.
+             Menos sensible a condiciones atmosfericas que NDVI.
+             Desarrollado por Hu (2009) para floraciones en Florida.
+
+  3.4. B5_B4_ratio
+  -----------------------------------------------------------------------
+  Formula:  B5 / (B4 + 1e-10)
+  Utilidad: Relacion simple red-edge/rojo. Similar a NDCI pero sin
+             normalizar. Valores altos indican clorofila elevada.
+
+  3.5. B3_B2_ratio
+  -----------------------------------------------------------------------
+  Formula:  B3 / (B2 + 1e-10)
+  Utilidad: Relacion verde/azul. Util para distinguir tipos de
+             sedimento en suspension y materia organica disuelta
+             (CDOM). Aguas con mucha materia organica tienen
+             valores mas bajos.
+
+  3.6. B8_B3_ratio
+  -----------------------------------------------------------------------
+  Formula:  B8 / (B3 + 1e-10)
+  Utilidad: Relacion NIR/verde. Floraciones densas tienen alta
+             reflectancia NIR y baja reflectancia verde,
+             resultando en valores altos.
+
+
+4. VARIABLES CLIMATICAS (ERA5-Land)
+===============================================================================
+
+Ademas de las 11 variables espectrales (5 bandas + 6 indices), el modelo
+usa 7 variables climaticas del reanalisis ERA5-Land (ECMWF):
+
+  Variable                Unidades       Descripcion
+  ----------------------  -------------  --------------------------------
+  temp_air_2m             K              Temperatura del aire a 2m
+  solar_radiation         J/m^2          Radiacion solar entrante
+  precipitation           m              Precipitacion acumulada (4h)
+  wind_speed_10m          m/s            Velocidad del viento a 10m
+  wind_u_10m              m/s            Componente U del viento a 10m
+  wind_v_10m              m/s            Componente V del viento a 10m
+  surface_pressure        hPa            Presion atmosferica superficial
+
+  Estas variables se extraen como valor puntual a las 12:00 UTC para
+  la fecha y coordenada de cada muestra. En los mapas de produccion
+  (mapas_finales/), se usan valores promedio (ERA_M) porque no se
+  dispone de datos climaticos historicos para cada fecha especifica.
+
+
+5. FEATURES TOTALES DEL MODELO (18)
+===============================================================================
+
+  5 bandas crudas:     B2, B3, B4, B5, B8
+  6 indices:           NDCI, NDVI, FAI, B5_B4_ratio, B3_B2_ratio, B8_B3_ratio
+  7 climaticas:        temp_air_2m, solar_radiation, precipitation,
+                       wind_speed_10m, wind_u_10m, wind_v_10m, surface_pressure
+
+  Total: 18 features de entrada para HABNet1Dv2 y XGBoost.
+
+
+6. ADAPTACION DE DOMINIO (Florida -> Honduras)
+===============================================================================
+
+  Las firmas espectrales de Honduras (Yojoa, Cajon, Golfo Fonseca)
+  son sistematicamente diferentes a las de Florida (Okeechobee, TampaBay).
+
+  Para corregir esto, se calcula un shift espectral:
+    spectral_shift = media(Florida) - media(Honduras)
+
+  Este shift se SUMA a las 11 variables espectrales de Honduras durante
+  la generacion de mapas (no durante entrenamiento, a menos que se
+  aplique data augmentation).
+
+  Valores actuales del shift (calculados sobre datos pre-escalados):
+
+    B2:            -0.0009  (casi sin cambio)
+    B3:            -0.0095  (Yojoa tiene mas verde que Florida)
+    B4:            +0.0017  (Florida tiene mas rojo que Honduras)
+    B5:            -0.0146
+    B8:            -0.0660  (Honduras tiene mucho mas NIR que Florida)
+    NDCI:          -0.1030
+    NDVI:          -0.1277
+    FAI:           +0.0009
+    B5_B4_ratio:   -0.6151
+    B3_B2_ratio:   -0.3392
+    B8_B3_ratio:   -1.1440
+
+  El shift se guarda en: modelo_final_2023/spectral_shift.npy
+
+
+7. REFERENCIAS
+===============================================================================
+
+  - Mishra, S., & Mishra, D. R. (2012). Normalized difference chlorophyll
+    index: A novel model for remote estimation of chlorophyll-a
+    concentration in turbid productive waters. Remote Sensing of
+    Environment, 117, 394-406.
+
+  - Hu, C. (2009). A novel ocean color index to detect floating algae
+    in the global oceans. Remote Sensing of Environment, 113(10),
+    2118-2129.
+
+  - Sentinel-2 MSI Technical Guide:
+    https://sentinels.copernicus.eu/web/sentinel/user-guides/
+    sentinel-2-msi
+
+  - ERA5-Land: Muñoz-Sabater, J., et al. (2021). ERA5-Land: a
+    state-of-the-art global reanalysis dataset for land applications.
+    Earth System Science Data, 13(9), 4349-4383.
+
+===============================================================================
+FIN DEL DOCUMENTO
+===============================================================================

@@ -1,0 +1,17 @@
+# Sistema de predicción temprana de riesgo de biomasa algal (HABs) — dependencias
+# Núcleo de modelado:
+numpy==2.4.2
+pandas==2.3.3
+scikit-learn==1.8.0
+xgboost==3.2.0
+torch>=2.0          # red neuronal HABNet (CPU o GPU; build local fue 2.11.0+cu128)
+scipy==1.17.1
+matplotlib==3.10.8
+joblib==1.5.3
+
+# Geoespacial / ingesta de datos (solo para re-descargar y re-procesar desde crudo):
+rasterio==1.5.0
+xarray==2025.1.1
+geopandas==1.1.3
+earthengine-api==1.7.26   # descarga Sentinel-2 vía Google Earth Engine (requiere cuenta GEE)
+openeo==0.50.0            # descarga Sentinel-3 OLCI vía Copernicus (requiere cuenta CDSE)

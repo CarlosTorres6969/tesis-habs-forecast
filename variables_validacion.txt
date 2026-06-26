@@ -1,0 +1,106 @@
+================================================================================
+ VARIABLES PARA VALIDACION DEL PROYECTO
+ Sistema de Prediccion Temprana de HABs (Harmful Algal Blooms)
+================================================================================
+
+1. VARIABLES DEL MODELO (18 features)
+
+
+- B2 — Azul: penetra el agua, detecta sedimentos y CDOM
+- B3 — Verde: firma espectral de clorofila
+- B4 — Rojo: absorbido por clorofila-a, referencia para NDCI/FAI
+- B5 — Red-edge: sensible a clorofila, componente clave del NDCI
+- B8 — NIR: detecta floraciones superficiales de cianobacterias
+- NDCI — Descripción expandida: índice más importante para HABs, rango -1 a 1, valores > 0 = clorofila
+- NDVI — Descripción expandida: filtro de calidad, NDVI > 0.4 se descarta del análisis de agua
+================================================================================
+
+1.1. VARIABLES ESPECTRALES (Sentinel-2) - 11 variables
+--------------------------------------------------------------------------------
+  1.  B2 (493 nm)           - Azul
+  2.  B3 (560 nm)           - Verde
+  3.  B4 (665 nm)           - Rojo
+  4.  B5 (705 nm)           - Rojo borde
+  5.  B8 (842 nm)           - Infrarrojo cercano
+  6.  NDCI                  - Normalized Difference Chlorophyll Index
+  7.  NDVI                  - Normalized Difference Vegetation Index
+  8.  FAI                   - Fluorescence Area Index
+  9.  B5_B4_ratio           - Relacion B5/B4
+  10. B3_B2_ratio           - Relacion B3/B2
+  11. B8_B3_ratio           - Relacion B8/B3
+
+1.2. VARIABLES CLIMATICAS (ERA5-Land) - 7 variables
+--------------------------------------------------------------------------------
+  12. temp_air_2m           - Temperatura del aire a 2  
+  13. solar_radiation       - Radiacion solar (SSRD)
+  14. precipitation         - Precipitacion (TP)
+  15. wind_speed_10m        - Velocidad del viento a 10 metros
+  16. wind_u_10m            - Componente U del viento
+  17. wind_v_10m            - Componente V del viento
+  18. surface_pressure      - Presion superficial (SP)
+
+
+2. VARIABLE OBJETIVO
+================================================================================
+  - es_floracion (binaria)
+  - Umbral: HAB >= 10 ug/L de clorofila
+  - Valor 1: Floracion algal nociva detectada
+  - Valor 0: Sin floracion
+
+
+3. METRICAS DE VALIDACION
+================================================================================
+
+3.1. VALIDACION CRUZADA (5-Fold Stratified)
+--------------------------------------------------------------------------------
+  Metodo:           StratifiedKFold(5, shuffle=True, random_state=42)
+  Metricas:         AUC-ROC, F1-score, Accuracy
+  Resultado:        AUC promedio = 0.9813 +/- 0.002
+
+3.2. VALIDACION HOLDOUT (80/20)
+--------------------------------------------------------------------------------
+  Particion:        Estratificada preservando proporcion HAB
+  HABNet1Dv2:       AUC = 0.9861, F1 = 0.8871, Accuracy = 0.9419
+  XGBoost:          AUC = 0.9948, F1 = 0.9498, Accuracy = 0.9730
+
+3.3. CORRELACION CON CLOROFILA IN-SITU
+--------------------------------------------------------------------------------
+  Metodo:           Pearson y Spearman entre probabilidad del modelo y CHL
+  Muestras:         n = 2,424
+  XGBoost:          Pearson r = 0.7471, Spearman rho = 0.7709
+
+3.4. ESTABILIDAD TEMPORAL (AUC por anio)
+--------------------------------------------------------------------------------
+  2023:             AUC = 0.9918  (118 muestras)
+  2024:             AUC = 1.0000  (53 muestras)
+  2025:             AUC = 1.0000  (1,194 muestras)
+  2026:             AUC = 0.9985  (1,044 muestras)
+
+3.5. PREDICCION POR LEAD-TIME (Anticipacion)
+--------------------------------------------------------------------------------
+  Descripcion:      Reemplazar ERA5 real por ERA5 de t-1 a t-7 dias
+  Resultado:        XGBoost AUC se mantiene estable:
+                    t0   = 0.9747
+                    t-7  = 0.9754
+
+3.6. ANALISIS DE PERTURBACION ERA5
+--------------------------------------------------------------------------------
+  Metodo:           Comparar ERA5 real vs. valores promedio
+  HABNet1Dv2:       AUC cae de 0.996 a 0.482
+  XGBoost:          AUC cae de 0.999 a 0.992 (robusto)
+
+
+4. CONTROLES DE CALIDAD EN PREPROCESAMIENTO
+================================================================================
+  - Normalizacion de bandas:  if max > 1.5: dividir por 10000
+  - Filtro de pixeles cero:   solo pixeles con todas las bandas > 0
+  - Filtro de agua:           NDWI > -0.5
+  - Filtro vegetacion:        NDVI < 0.4
+  - Validez ERA5:             solo muestras con datos climaticos completos
+  - Coordenadas:              validacion rango lat/lon (-90..90, -180..180)
+  - Umbral CHL:               descartar si CHL estimado < 0.5 ug/L
+
+
+================================================================================
+ FIN DEL DOCUMENTO
+================================================================================

@@ -1,0 +1,210 @@
+===============================================================================
+ REGISTRO DE FUENTES DE DATOS Y VALIDACION
+ Proyecto: Sistema de Prediccion Temprana de HABs (Harmful Algal Blooms)
+===============================================================================
+ Generado: 21/06/2026
+===============================================================================
+
+1. FUENTES DE DATOS
+===============================================================================
+
+1.1. IMAGENES SATELITALES - Sentinel-2 (ESA Copernicus)
+-------------------------------------------------------------------------------
+  Producto:     S2MSI2A (Bottom-of-Atmosphere)
+  Bandas:       B2 (493 nm), B3 (560 nm), B4 (665 nm), B5 (705 nm), B8 (842 nm)
+  Resolucion:   10-20 m (remuestreado a 20 m)
+  Revisita:     ~5 dias
+  Periodo:      2023 - 2026
+  Formato:      GeoTIFF, 16-bit unsigned
+  Total tiles:  ~888
+  Distribucion por region:
+    - Okeechobee (Florida):     509 tiles
+    - TampaBay (Florida):        83 tiles
+    - Embalse El Cajon (Hond):   79 tiles
+    - Golfo de Fonseca (Hond):  139 tiles
+    - Lago de Yojoa (Hond):      78 tiles
+  Almacenamiento: imagenes/{Region}/{Anio}/S2_{Region}_{Anio}_{Fecha}_{ID}.tif
+  Tamano aprox: ~40 GB
+  Fuente: https://dataspace.copernicus.eu/
+
+1.2. DATOS CLIMATICOS - ERA5-Land (ECMWF Copernicus CDS)
+-------------------------------------------------------------------------------
+  Dataset:      reanalysis-era5-land
+  Resolucion:   0.1 deg x 0.1 deg (~9 km), each 4-hourly
+  Variables:    t2m (temp. 2m), u10/v10 (viento), sp (presion superficial),
+                ssrd (radiacion solar), tp (precipitacion)
+  Seleccion:    Valor a las 12:00 UTC; tambien extraido a t-1, t-3, t-5, t-7 dias
+  Periodo:      2023-01 a 2026-05
+  Archivos:     211 archivos NetCDF (~219 MB)
+  Formato:      era5_temp_nc/era5_{instant|accum}_{YYYY}_{MM}.nc
+  Fuente:       https://cds.climate.copernicus.eu/ (CDS API v3)
+
+1.3. CLOROFILA SATELITAL - MODIS Aqua (NASA Ocean Color)
+-------------------------------------------------------------------------------
+  Producto:     MODIS Aqua L3m CHL monthly, 4 km resolution
+  Algoritmo:    OC3M/OCI combined (chlor_a)
+  Cobertura:
+    - Golfo de Fonseca:  35/41 meses validos
+    - Lago de Yojoa:      6/41 meses validos
+    - El Cajon:           0/41 meses validos
+  Archivo:      datasets/honduras_modis_chl_monthly.csv
+  Fuente:       https://oceancolor.gsfc.nasa.gov/
+
+1.4. DATOS IN-SITU - Water Quality Portal (EPA/USGS)
+-------------------------------------------------------------------------------
+  Parametros:   Chlorophyll a (00665, 70960)
+  Organismos:   STF_WQX (South Florida Water Management District),
+                UWFCEDB (University of West Florida)
+  Archivos:
+    - datasets/florida/florida_chlorophyll_wqp.csv (crudo)
+    - datasets/florida/florida_chlorophyll_wqp_2025_2026.csv (2025-2026)
+    - datasets/florida/florida_chlorophyll_limpio.csv (limpio)
+    - datasets/rios/honduras_chlorophyll_wqp.csv (rios de Honduras)
+  Fuente:       https://www.waterqualitydata.us/ (API REST via dataRetrieval)
+
+1.5. DATOS DE MUESTREO EN CAMPO - Lago de Yojoa
+-------------------------------------------------------------------------------
+  Estaciones:   18 estaciones de muestreo (A-R)
+  Variables:    Clorofila, disco Secchi, parametros de calidad de agua
+  Archivos:
+    - datasets/location_lat_longs_YOJOA.csv
+    - datasets/Secchi_completedataset.csv
+
+1.6. DATASETS DERIVADOS (Generados por el pipeline)
+-------------------------------------------------------------------------------
+  Archivo principal de entrenamiento:
+    datasets/dataset_entrenamiento_completo_2023_2026.csv
+    2,424 muestras, 18 variables (11 espectrales + 7 climaticas),
+    645 eventos HAB (26.6%)
+
+  Muestras sinteticas 2026:
+    datasets/samples_2026_s2_chl.csv
+    1,342 muestras generadas con RandomForest CHL estimator
+
+  Datos predictivos:
+    - datasets/pares_predictivos.csv (565 filas)
+    - datasets/pares_predictivos_30d.csv (con gap de 30 dias)
+
+  ERA5 multi-lead:
+    datasets/lead_time_era5.csv (ERA5 extraido a t0, t-1, t-3, t-5, t-7)
+
+  Datos historicos Yojoa:
+    datasets/yojoa_era5_data.csv (~20 MB, 50 variables, 1950-2023)
+    datasets/yojoa_s2_matched.csv (firmas espectrales adaptadas)
+
+  Datos Florida:
+    datasets/florida/florida_s2_matched.csv (firmas espectrales Florida)
+
+
+2. PIPELINE DE PROCESAMIENTO
+===============================================================================
+
+  1. calibrar_chl_s2.py
+     -> Entrena RandomForestRegressor para estimar clorofila desde S2
+     -> Pearson r = 0.85
+
+  2. apply_chl_2026.py
+     -> Genera 1,342 muestras sinteticas 2026 desde GeoTIFFs + ERA5
+
+  3. lead_time_era5.py
+     -> Extrae ERA5 a multiples lead times (t0 .. t-7)
+
+  4. clean_concat.py
+     -> Unifica datos historicos + 2026 en dataset final
+
+  5. Modelo_tesis.ipynb
+     -> Pipeline completo: entrenamiento, validacion, mapas, lead-time
+
+  6. Modelo_validacion.ipynb
+     -> Analisis de validacion y visualizaciones
+
+
+3. METODOS DE VALIDACION
+===============================================================================
+
+3.1. VALIDACION CRUZADA (5-Fold Stratified)
+-------------------------------------------------------------------------------
+  Metodo:       StratifiedKFold(5, shuffle=True, random_state=42)
+  Resultado:    AUC promedio = 0.9813 +/- 0.002
+  Observacion:  Todas las particiones con AUC > 0.979
+
+3.2. VALIDACION HOLDOUT (80/20)
+-------------------------------------------------------------------------------
+  Particion:    Estratificada preservando proporcion HAB
+  HABNet1Dv2:   AUC = 0.9861, F1 = 0.8871, Accuracy = 0.9419
+  XGBoost:      AUC = 0.9948, F1 = 0.9498, Accuracy = 0.9730
+
+3.3. CORRELACION CON CLOROFILA IN-SITU
+-------------------------------------------------------------------------------
+  Metodo:       Pearson y Spearman entre probabilidad del modelo y CHL medida
+  Muestras:     n = 2,424
+  XGBoost:      Pearson r = 0.7471, Spearman rho = 0.7709
+  Archivo:      validacion_mapas/resumen_validacion.json
+  Por region:   validacion_mapas/resumen_validacion_regiones.json
+
+3.4. ESTABILIDAD TEMPORAL (AUC por anio)
+-------------------------------------------------------------------------------
+  2023:  AUC = 0.9918  (118 muestras)
+  2024:  AUC = 1.0000  (53 muestras)
+  2025:  AUC = 1.0000  (1,194 muestras)
+  2026:  AUC = 0.9985  (1,044 muestras)
+
+3.5. PREDICCION POR LEAD-TIME (Anticipacion)
+-------------------------------------------------------------------------------
+  Descripcion:  Reemplazar ERA5 real por ERA5 de t-1 a t-7 dias
+  Resultado:    XGBoost AUC se mantiene estable:
+                t0   = 0.9747
+                t-7  = 0.9754
+  Conclusion:   El sistema puede operar con pronosticos hasta 7 dias antes
+
+3.6. ANALISIS DE PERTURBACION ERA5
+-------------------------------------------------------------------------------
+  Metodo:       Comparar ERA5 real vs. valores promedio
+  HABNet1Dv2:   AUC cae de 0.996 a 0.482 (demasiado sensible)
+  XGBoost:      AUC cae de 0.999 a 0.992 (robusto)
+  Decision:     XGBoost seleccionado para mapas de produccion
+
+3.7. CONTROLES DE CALIDAD EN PREPROCESAMIENTO
+-------------------------------------------------------------------------------
+  - Normalizacion de bandas:  if max > 1.5: dividir por 10000
+  - Filtro de pixeles cero:   solo pixeles con todas las bandas > 0
+  - Filtro de agua:           solo pixeles con indice de agua positivo
+  - Validez ERA5:             solo muestras con datos climaticos completos
+  - Coordenadas:              validacion rango lat/lon (-90..90, -180..180)
+  - Umbral CHL:               descartar si CHL estimado < 0.5 ug/L
+
+
+4. MODELOS ENTRENADOS (modelo_final_2023/)
+===============================================================================
+  habnet1d_v2_final.pt        (357 KB)  - HABNet1Dv2 (PyTorch)
+  habnet1d_v2_temporal.pt     (360 KB)  - HABNet1Dv2 version temporal
+  xgb_model.json              (815 KB)  - XGBoost (formato JSON)
+  xgboost_final.pkl           (278 KB)  - XGBoost (pickle)
+  scaler.pkl                           - StandardScaler (18 features)
+  rf_chl_estimator.pkl        (1.5 MB) - RandomForest CHL estimator
+  spectral_shift.npy                   - Shift de adaptacion de dominio
+  spectral_adaptation.pkl              - Adaptacion espectral alternativa
+
+
+5. REGIONES MONITOREADAS
+===============================================================================
+  Florida, USA:
+    - Lake Okeechobee
+    - Tampa Bay
+
+  Honduras, Centroamerica:
+    - Lago de Yojoa
+    - Embalse El Cajon
+    - Golfo de Fonseca
+
+
+6. DOCUMENTACION ADICIONAL
+===============================================================================
+  DESCRIPCION_ARCHIVOS.txt  - Descripcion completa de archivos del proyecto
+  data_lineage.tex          - Documento LaTeX con linea de datos y metadatos
+  data_lineage.pdf          - PDF compilado del lineage de datos
+
+
+===============================================================================
+FIN DEL REGISTRO
+===============================================================================

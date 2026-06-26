@@ -1,0 +1,44 @@
+# === Datos pesados (NO se versionan; se descargan con los scripts fetch_/ingest_) ===
+imagenes/
+era5_temp_nc/
+datasets/
+mapas_finales/
+mapas_hab_florida/
+mapas_hab_honduras/
+validacion_mapas/
+backup/
+archive/
+*.tif
+*.tiff
+*.jp2
+*.nc
+*.npy
+*.npz
+
+# === Salidas regenerables del pipeline (modelos, pares, reportes, mapas) ===
+habs_forecast/artifacts/
+*.pkl
+*.pt
+*.png
+
+# === LaTeX build ===
+*.aux
+*.log
+*.out
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
+# === Python ===
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# === OS / editores ===
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

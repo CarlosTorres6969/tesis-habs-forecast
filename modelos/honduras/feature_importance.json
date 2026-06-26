@@ -1,0 +1,106 @@
+[
+  {
+    "feature": "B2",
+    "gain_pct": 15.4
+  },
+  {
+    "feature": "FAI",
+    "gain_pct": 10.8
+  },
+  {
+    "feature": "B8_minus_B4",
+    "gain_pct": 8.19
+  },
+  {
+    "feature": "B3_plus_B4",
+    "gain_pct": 7.44
+  },
+  {
+    "feature": "B4",
+    "gain_pct": 7.41
+  },
+  {
+    "feature": "B5_B4_ratio",
+    "gain_pct": 5.11
+  },
+  {
+    "feature": "B5",
+    "gain_pct": 5.02
+  },
+  {
+    "feature": "NDCI",
+    "gain_pct": 4.82
+  },
+  {
+    "feature": "NDVI",
+    "gain_pct": 4.28
+  },
+  {
+    "feature": "B3",
+    "gain_pct": 3.61
+  },
+  {
+    "feature": "B2_B3_ratio",
+    "gain_pct": 3.18
+  },
+  {
+    "feature": "B3_B2_ratio",
+    "gain_pct": 2.89
+  },
+  {
+    "feature": "B8_B3_ratio",
+    "gain_pct": 2.72
+  },
+  {
+    "feature": "NDWI",
+    "gain_pct": 2.52
+  },
+  {
+    "feature": "B8",
+    "gain_pct": 2.49
+  },
+  {
+    "feature": "B5_B3_ratio",
+    "gain_pct": 2.32
+  },
+  {
+    "feature": "B8_B2_ratio",
+    "gain_pct": 2.29
+  },
+  {
+    "feature": "solar_radiation",
+    "gain_pct": 1.56
+  },
+  {
+    "feature": "norm_turb",
+    "gain_pct": 1.49
+  },
+  {
+    "feature": "turbidity",
+    "gain_pct": 1.32
+  },
+  {
+    "feature": "wind_v_10m",
+    "gain_pct": 1.07
+  },
+  {
+    "feature": "wind_speed_10m",
+    "gain_pct": 1.0
+  },
+  {
+    "feature": "precipitation",
+    "gain_pct": 0.94
+  },
+  {
+    "feature": "surface_pressure",
+    "gain_pct": 0.87
+  },
+  {
+    "feature": "temp_air_2m",
+    "gain_pct": 0.65
+  },
+  {
+    "feature": "wind_u_10m",
+    "gain_pct": 0.6
+  }
+]
