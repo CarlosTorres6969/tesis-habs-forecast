@@ -27,6 +27,7 @@ STEPS = [
     ("Validacion anidada (test temporal intacto)",            "evaluate_nested.py"),
     ("Intervalos de incertidumbre (cobertura CQR)",           "evaluate_intervals.py"),
     ("Sensibilidad ERA5 (reanalisis vs pronostico)",          "era5_sensitivity.py"),
+    ("Figuras de validacion (skill, intervalos, serie, dispersion)", "build_validation_figs.py"),
     ("Reporte de defensa consolidado",                        "build_final_report.py"),
 ]
 HERE = os.path.dirname(os.path.abspath(__file__))
