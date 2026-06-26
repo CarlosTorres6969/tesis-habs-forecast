@@ -25,7 +25,12 @@ causal** X(≤t₀) → clorofila-a(t₀+h), con validación temporal honesta.
 
 > El sistema es una **herramienta de alerta temprana** de condiciones de riesgo (biomasa /
 > clorofila-a elevada), **no** un detector certero de toxicidad: la confirmación de nocividad
-> requiere verificación de campo (cianobacterias, toxinas).""")
+> requiere verificación de campo (cianobacterias, toxinas).
+
+**Datos:** Sentinel-2 (predictor) + target satelital independiente — VIIRS (lagos) y **Sentinel-3
+OLCI 300 m** (costa, hasta jun 2026) — + ERA5 + in-situ (fósforo, calidad de agua). Ventana 2023–2026.
+**Reproducible:** los pares se guardan en orden canónico, así dos corridas dan resultados idénticos
+(clave para una defensa honesta, a diferencia del sistema viejo con fuga).""")
 
 md("## 0. Configuración e imports")
 code("""import os, sys, json, subprocess, warnings
@@ -47,7 +52,7 @@ display(df.groupby(["group","water_body"]).size().rename("pares").to_frame())
 viol = df[(df.horizon>0) & (df.fecha_target<=df.fecha_t0)]
 print(f"Pares con fuga temporal (target<=t0, h>0): {len(viol)}  -> 0 = sin fuga")""")
 
-md("## 2. Test de integridad (sin fuga / causal / consistente)\nSe ejecuta el script `check_integrity.py` que afirma 11 condiciones de honestidad.")
+md("## 2. Test de integridad (sin fuga / causal / consistente)\nSe ejecuta el script `check_integrity.py` que afirma **14 condiciones** de honestidad (11 de causalidad/sin-fuga + 3 de la capa operativa de alerta).")
 code("""r = subprocess.run([sys.executable, "check_integrity.py"], capture_output=True, text=True)
 print(r.stdout[-1200:])""")
 
@@ -120,15 +125,38 @@ rmse_persist = np.sqrt(mean_squared_error(te.log_chl_target, te.log_chl_t0))
 print(f"Okeechobee +5d | RMSE(log) modelo={rmse_model:.3f}  persistencia={rmse_persist:.3f}")
 print(f"Skill = {1 - rmse_model/rmse_persist:+.2f}  (>0 => mejor que persistencia)")""")
 
+md("""## 9. Capa operativa de alerta
+`forecast_body` (reusada por `predict.py` y `run_forecast.py`) emite el pronóstico estructurado por
+horizonte. `guards.py` añade una etiqueta de **confianza** según la frescura/cobertura de la escena
+(STALE / LOW_COVERAGE / EXPLORATORIO). `run_forecast.py` registra cada corrida en una bitácora y
+`verify_forecasts.py` la verifica cuando el target real madura (MAE, cobertura de banda, hit-rate).""")
+code("""from predict import forecast_body
+import guards
+fc = forecast_body("tampa_bay")                      # último t0 disponible (solo datos <= t0)
+conf, flags, age = guards.evaluate_guards("tampa_bay", fc["t0"], fc["n_water_px"])
+print(f"tampa_bay | t0={fc['t0'].date()} | edad={age}d | confianza={conf} {flags}")
+display(pd.DataFrame(fc["horizons"])[["horizon","chl_pred","p10","p90","prob_riesgo","riesgo"]])""")
+
+md("""## 10. Reproducibilidad
+Los pares se guardan en **orden canónico** (`water_body, horizon, fecha_t0, fecha_target`). Esto evita
+que el muestreo de XGBoost (`subsample`/`colsample` con semilla fija, que selecciona filas por
+posición) cambie entre corridas. Resultado: la validación anidada es **idéntica corrida a corrida**.""")
+code("""dfc = pd.read_csv(PAIRS)
+canon = dfc.sort_values(["water_body","horizon","fecha_t0","fecha_target"]).reset_index(drop=True)
+print("Pares en orden canónico (pipeline reproducible):", dfc.equals(canon))""")
+
 md("""## Reproducir todo
 ```bash
 pip install -r ../requirements.txt
 python run_pipeline.py        # build_scene_state -> ... -> build_final_report
-python check_integrity.py     # 11/11 OK
+python check_integrity.py     # 14/14 OK
+python run_forecast.py        # pronóstico operativo + bitácora
+python verify_forecasts.py    # verificación cuando el target madura
 ```
 Los datos pesados (rasters Sentinel-2, ERA5) se descargan con `fetch_*` / `ingest_*`
-(ver `run_pipeline.py`). **Conclusión:** pronóstico causal 0–7 d con skill significativo en lagos,
-alerta en costa, intervalos calibrados y herramienta de riesgo (no de confirmación de nocividad).""")
+(ver `run_pipeline.py`). **Conclusión:** pronóstico causal 0–7 d **reproducible**, con skill
+significativo en lagos (1/5/7 d) y **costa mejorada con OLCI fresco** (1/3/5 d), intervalos
+calibrados y una capa operativa de alerta — herramienta de **riesgo**, no de confirmación de toxicidad.""")
 
 nb["cells"] = C
 nb["metadata"] = {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
