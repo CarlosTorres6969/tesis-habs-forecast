@@ -1,0 +1,32 @@
+name: integridad
+
+# Verifica en cada push/PR que el codigo compila y que pasan los checks de honestidad
+# ESTATICOS (sin fuga / features limpias). Los datos pesados no estan en el repo (.gitignore),
+# por eso check_integrity.py corre en modo estatico aqui; en local (con artifacts/) corre los 11.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias minimas
+        run: pip install numpy pandas scikit-learn joblib
+
+      - name: Compilar todos los modulos (sintaxis)
+        run: python -m py_compile habs_forecast/*.py
+
+      - name: Check de integridad (estatico, sin fuga)
+        working-directory: habs_forecast
+        run: python check_integrity.py

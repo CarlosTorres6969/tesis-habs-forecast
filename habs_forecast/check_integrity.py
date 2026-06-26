@@ -23,10 +23,10 @@ def chk(desc, ok, detalle=""):
 
 
 def main():
-    df = pd.read_csv(PAIRS, parse_dates=["fecha_t0", "fecha_target"])
-
-    # 1) Ninguna feature es el target ni un patron prohibido (fuga)
     target_cols = {"log_chl_target", "chl_target", "hab_target", "fecha_target", "gap_real", "thr_body"}
+
+    # --- Checks ESTATICOS (no requieren datos; corren tambien en CI) ---
+    # 1) Ninguna feature es el target ni un patron prohibido (fuga)
     forbidden = ["delta", "target", "future", "lag14", "lag30", "t-14", "t-30"]
     bad = [f for f in FEATURES if f in target_cols or any(s in f.lower() for s in forbidden)]
     chk("Ninguna feature contaminada/prohibida en FEATURES", not bad, f"sospechosas={bad}")
@@ -36,6 +36,15 @@ def main():
 
     # 3) Backbone autorregresivo presente y causal por nombre
     chk("Backbone autorregresivo (log_chl_t0) presente", "log_chl_t0" in FEATURES)
+
+    # 7) target (log_chl_target) NO esta dentro de FEATURES
+    chk("El target no aparece como feature", "log_chl_target" not in FEATURES)
+
+    # --- Checks que requieren los PARES (se omiten en CI si no hay datos) ---
+    if not os.path.exists(PAIRS):
+        print("(sin pares en disco -> solo checks estaticos; en CI esto es esperado)")
+        _report(); return
+    df = pd.read_csv(PAIRS, parse_dates=["fecha_t0", "fecha_target"])
 
     # 4) Causalidad: para h>0 el target es ESTRICTAMENTE futuro
     viol = df[(df["horizon"] > 0) & (df["fecha_target"] <= df["fecha_t0"])]
@@ -54,9 +63,6 @@ def main():
     # 6) Todas las FEATURES presentes en los pares
     missing = [f for f in FEATURES if f not in df.columns]
     chk("Todas las FEATURES presentes en los pares", not missing, f"faltan={missing}")
-
-    # 7) target (log_chl_target) NO esta dentro de FEATURES
-    chk("El target no aparece como feature", "log_chl_target" not in FEATURES)
 
     # 8) Sin pares duplicados EXACTOS (fila identica). NB: misma fecha con varias escenas S2
     #    (tiles/pasadas distintas, espectro diferente) es legitimo y NO se cuenta como duplicado.
@@ -90,8 +96,10 @@ def main():
         if any(f in target_cols for f in feats):
             okf = False
     chk("Features de los modelos sin columnas de target", okf)
+    _report()
 
-    # --- reporte ---
+
+def _report():
     print("=" * 68)
     print("CHECK DE INTEGRIDAD DEL PIPELINE (sin fuga / causal / consistente)")
     print("=" * 68)

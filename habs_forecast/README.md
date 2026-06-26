@@ -1,111 +1,81 @@
-# habs_forecast — Pronóstico temprano de HABs (0–7 días)
+# habs_forecast — Predicción temprana de riesgo de biomasa algal (0–7 días)
 
-Pipeline de la tesis *"Sistema Inteligente de Predicción Temprana de Floraciones Algales
-Nocivas a 0–7 días mediante Análisis Multiespectral y Redes Neuronales"*.
+![integridad](https://github.com/CarlosTorres6969/tesis-habs-forecast/actions/workflows/ci.yml/badge.svg)
 
-Reconstruido desde cero para **pronóstico causal real** (X disponible ≤ t₀ → estado en t₀+h),
-corrigiendo el sistema anterior, que en realidad era **detección** con métricas infladas por
-fuga de información (target derivado de las mismas bandas, validación con shuffle, AUC≈1.0).
+Pipeline de la tesis sobre **pronóstico temprano de floraciones algales**. El sistema es una
+**herramienta de alerta temprana de condiciones de riesgo** (clorofila-a / biomasa algal elevada),
+**no** un detector certero de toxicidad: confirmar nocividad requiere verificación de campo
+(cianobacterias, toxinas). Sentinel-2 estima biomasa, no identifica cianobacterias.
 
----
-
-## Decisiones de diseño (Fase 1, cerradas)
-
-| Tema | Decisión | Justificación |
-|---|---|---|
-| Problema | Pronóstico causal X(≤t₀)→y(t₀+h) | el título exige anticipación, no detección |
-| Horizontes | Modelos **separados** h=0,1,3,5,7 | N pequeño; validación más simple |
-| Ventana | **Solo 2023–2026** | cobertura Sentinel-2 |
-| Grupos | Lago (cianobacterias) vs Costa (dinoflagelados) | biogeoquímica distinta, no óptica |
-| Predictores | S2 espectral + autorregresivo chl + ERA5 | ver importancia de features |
-| Target | **VIIRS chl diario** (sensor independiente de S2) | rompe la circularidad |
-| Validación | Walk-forward (operativo) + **LOWBO** lago↔lago, costa↔costa | generalización honesta |
-| Métricas | Skill vs persistencia, RMSE(log-chl), Recall, PR-AUC | eventos raros |
+Reconstruido desde cero para **pronóstico causal** X(≤t₀) → clorofila-a(t₀+h), corrigiendo el
+sistema anterior (en `../legacy/`), que era **detección con fuga** (target circular + validación con
+shuffle → AUC≈1.0 falso).
 
 ---
 
-## Flujo del pipeline
+## Qué hace
 
-```
-imagenes/*.tif (888 S2) ──► build_scene_state.py ──► scene_state.csv      (PREDICTOR X en t0)
-era5_temp_nc/*.nc ─────────► build_era5_daily.py ──► era5_daily.csv        (drivers meteo)
-ERDDAP VIIRS ──────────────► fetch_satellite_chl.py ► satellite_chl_daily.csv (TARGET y en t0+h)
-WQP ───────► fetch_wqp_stations.py + ingest_insitu.py ► insitu_chl.csv     (VALIDACIÓN in-situ)
-                                   │
-                                   ▼
-                         match_pairs.py  (une X(t0) con y(t0+h) + autorregresivo + ERA5, sin fuga)
-                                   ▼
-                         pairs_forecast.csv
-                                   ▼
-                    train.py  (XGBoost por horizonte; walk-forward + LOWBO)
-                    analyze_importance.py  (qué impulsa el pronóstico)
-```
+- **Intensidad**: pronostica clorofila-a (µg/L) a +1/+3/+5/+7 días, con **banda de incertidumbre
+  P10–P90 calibrada** (regresión cuantil conformalizada, CQR; cobertura ~0.80 verificada).
+- **Alerta de riesgo**: probabilidad calibrada de biomasa anómala (P85 de la climatología local),
+  ensamble **XGBoost + red neuronal**, con umbral operativo F2 (prioriza recall).
+- **Mapas** espaciales de clorofila-a prevista por cuerpo.
 
-### Orden de ejecución
+## Datos (solo 2023–2026)
+
+| Fuente | Rol |
+|---|---|
+| Sentinel-2 (multiespectral) + **Landsat 8/9** | predictor espectral en t₀ (Landsat densifica Cajón) |
+| VIIRS / OLCI (clorofila satelital diaria) | **target** en t₀+h (sensor independiente → sin circularidad) |
+| ERA5-Land | drivers meteorológicos |
+| WQP in-situ (fósforo, calidad de agua) | contexto + validación |
+
+Cuerpos: lagos **Okeechobee, Yojoa, Cajón**; costa **Tampa Bay, Golfo de Fonseca**.
+
+---
+
+## Reproducir
+
 ```bash
-python fetch_satellite_chl.py     # target VIIRS diario (ERDDAP, sin credenciales)
-python fetch_wqp_stations.py      # coords de estaciones WQP (1 vez)
-python ingest_insitu.py           # set de validación in-situ 2023-2026
-python build_scene_state.py       # predictores desde rasters S2 (lento, ~40GB)
-python build_era5_daily.py        # drivers ERA5 diarios
-python match_pairs.py             # pares causales X(t0)->y(t0+h)
-python train.py                   # entrenamiento + validación
-python analyze_importance.py      # diagnóstico de features
+pip install -r ../requirements.txt
+python run_pipeline.py        # build_scene_state → harmonize → match_pairs → train → eval → reporte
+python check_integrity.py     # 11 aserciones de honestidad (sin fuga / causal / consistente)
 ```
 
-Salidas en `artifacts/` (state_series, targets, pairs, models, reports).
+La descarga de datos crudos (requiere credenciales) va aparte: `fetch_satellite_chl.py` (VIIRS, sin
+credenciales), `fetch_s2_scenes.py` / `fetch_landsat_scenes.py` (GEE), `fetch_olci_chl.py`
+(Copernicus), `ingest_*.py` (WQP), `build_era5_daily.py`. Ver `run_pipeline.py`.
+
+## Validación honesta
+
+- **`evaluate_nested.py`** — validación anidada con **test temporal intacto** (último ~25% nunca
+  tocado; selección de features solo en DEV). Es el número defendible.
+- **`evaluate_intervals.py`** — cobertura de los intervalos de incertidumbre (CQR).
+- **`era5_sensitivity.py`** — robustez reanálisis vs pronóstico (ablación + ruido).
+- **`check_integrity.py`** — test ejecutable: sin fuga, causalidad (target>t₀), features limpias,
+  modelos con intervalos. Corre en CI (modo estático) y en local (11/11).
+
+Resultados definitivos auto-generados en **`REPORTE_DEFENSA.md`** (`build_final_report.py`).
+
+### Lectura de resultados
+- **Lagos** (Okeechobee, Yojoa, Cajón): skill de regresión significativo vs persistencia en la
+  mayoría de horizontes; la ventaja **crece a horizonte largo** (estacionalidad/inercia).
+- **Costa**: la **alerta** funciona (PR-AUC); la intensidad es significativa a horizontes medios.
+- **h=0** es detección (persistencia perfecta) → se reporta aparte, no es pronóstico.
+
+## Niveles de confianza
+- **ALTA**: Okeechobee (target VIIRS validado con in-situ), Tampa/Fonseca (target satelital validado).
+- **Validado fuera de ventana**: Yojoa (VIIRS sigue el Secchi de campo 2018–2022).
+- **Exploratorio**: Cajón (evaluable gracias a Landsat; sin verdad de campo).
+
+## Limitaciones declaradas
+- Clorofila-a ≠ floración nociva (proxy de biomasa; toxicidad requiere campo).
+- Sentinel-2 no distingue cianobacterias (sin banda de ficocianina ~620 nm).
+- Nitrógeno representado por **amonio** (una sola forma del N; sin nitrato/nitrito/N total).
+- In-situ 2023–2026 escaso (Honduras sin verdad de campo en ventana).
+- Landsat 8/9 sin red-edge → NDCI/CI_red/FAI quedan NaN en sus escenas (offset cross-sensor
+  harmonizado; el pronóstico es robusto a él, ver `ESTADO_PROYECTO.md`).
 
 ---
 
-## Resultados honestos (no inflados)
-
-**Skill de pronóstico vs persistencia (walk-forward, Okeechobee):**
-
-| Horizonte | RMSE_log modelo | RMSE_log persistencia | Skill |
-|---|---|---|---|
-| +1 d | 0.459 | 0.505 | +9% |
-| +3 d | 0.576 | 0.599 | +4% |
-| +5 d | 0.555 | 0.641 | +13% |
-| +7 d | 0.557 | 0.719 | **+23%** |
-
-La ventaja sobre la persistencia **crece con el horizonte** → justifica el sistema de IA.
-
-**Importancia de features por familia (sin fuga óptica):**
-
-| Horizonte | ERA5 | Autorregresivo | Espectral S2 |
-|---|---|---|---|
-| +1 d | 1.05 | 0.75 | 0.20 |
-| +3 d | 0.87 | 0.94 | 0.19 |
-| +7 d | 0.84 | 0.78 | 0.38 |
-
-- Lagos: dominan clorofila reciente + radiación/lluvia (cianobacterias, limitación nutrientes/luz).
-- Costa: dominan presión y viento (dinoflagelados, forzamiento físico).
-- Espectral S2 pesa poco → el modelo **no** lee el bloom del target en la imagen (no hay fuga).
-
----
-
-## Sistema híbrido (regresión + clasificación)
-
-- **Cabeza de regresión**: predice log(chl) → intensidad. Resultado estable y citable (skill vs
-  persistencia, arriba). Es el producto principal.
-- **Cabeza de clasificación directa**: XGBoost con `scale_pos_weight` sobre el evento de alerta
-  (umbral **relativo por ecosistema**, P85 de la climatología local). Mejora el Recall en costa
-  donde "regresión→umbral" fallaba (p.ej. Tampa Bay LOWBO: 0.00 → 0.33–1.00). Producto
-  complementario, de **menor confianza** (alta varianza por folds pequeños).
-
-## Hallazgos / advertencias para la defensa
-
-1. **h=0 es detección, no pronóstico** (persistencia perfecta por construcción). Reportar aparte.
-2. **h≥1 dentro del cuerpo = skill real** de regresión sobre persistencia (producto principal).
-3. **Transferencia inter-ecosistema (LOWBO) es débil** — límite genuino de generalización.
-4. **La alerta de clasificación es inestable a horizonte largo** (folds de test pequeños, eventos
-   raros). Reportar con incertidumbre; mejora pendiente: métricas agregadas/bootstrap, no fold único.
-
-## Limitaciones
-
-- Target VIIRS 750 m es grueso para lagos pequeños (Yojoa, Cajón) → densidad/ruido. Mejora
-  futura: **Sentinel-3 OLCI 300 m** (requiere credenciales Copernicus Data Space).
-- ERA5: serie ~574 días/cuerpo (no estrictamente diaria); Fonseca (13.2 N) al borde sur de la
-  grilla → punto más cercano (aproximación).
-- In-situ 2023–2026 escaso (389 pts) → rol de validación, no de entrenamiento.
-- Nubosidad limita la cadencia de S2 (predictor).
+Estado detallado y bitácora: **`ESTADO_PROYECTO.md`**. Anexo reproducible: **`Modelo_HABs_limpio.ipynb`**.
