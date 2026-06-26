@@ -234,9 +234,19 @@ histórico) · `python verify_forecasts.py` (evalúa lo madurado) · `python bui
 - **Integridad**: `check_integrity.py` = **14/14 OK** (11 de honestidad/causalidad + 3 de la capa
   operativa). Sin fuga, causal, consistente.
 
+## ENTREGABLES VISUALES + PROGRAMACIÓN (2026-06-26) — HECHO
+- **Set completo de mapas** (5 cuerpos, escena más limpia + máscara estricta) guardado en
+  `habs_forecast/entregables/mapas/mapa_<cuerpo>_h1.png` (local; las PNG quedan fuera de git por
+  `.gitignore`, regenerables con `python make_maps.py <cuerpo>`).
+- **Pronóstico programable**: `run_scheduled.py` (forecast + verificación encadenados, probado) +
+  `register_task.ps1` (tarea diaria de Windows). El registro de la tarea lo activa el usuario.
+- **Densificación Cajón (#4) y OLCI costa (#5)**: NO ejecutados. #4 cambiaría los números oficiales
+  recién reconciliados (rendimiento decreciente); #5 requiere login interactivo de Copernicus y, sin
+  OLCI denso, la costa +1d/+7d no mejora. Quedan como opcionales a criterio del usuario.
+
 ## QUÉ SIGUE (pendiente)
 Modelos en estado de defensa. Quedan, cuando el usuario lo indique (EN PAUSA): notebook limpio y
-redacción de tesis. (Figuras de validación: HECHAS y reconciliadas.)
+redacción de tesis. (Figuras de validación + mapas + capa operativa: HECHOS.)
 
 ## EN PAUSA (no hacer hasta que el usuario lo pida)
 Figuras, notebook limpio que reemplace los viejos, redacción de tesis.
@@ -277,6 +287,9 @@ Figuras, notebook limpio que reemplace los viejos, redacción de tesis.
   - `guards.py` — guardas de frescura/cobertura/estado → etiqueta de `confianza`.
   - `run_forecast.py` — bucle operativo (emite + bitácora `forecast_log.csv`); `--backfill K` siembra histórico.
   - `verify_forecasts.py` — verificación posterior (MAE/cobertura banda/hit-rate alerta de lo madurado).
+  - `run_scheduled.py` — runner programable: encadena `run_forecast` + `verify_forecasts` con log a
+    `artifacts/forecasts/scheduled.log`. Para que la bitácora madure sola. Registrar con `register_task.ps1`.
+  - `register_task.ps1` — registra una tarea DIARIA de Windows que corre `run_scheduled.py` (06:00).
   - `build_model_cards.py` — model cards (`artifacts/models/model_cards.json`) para trazabilidad.
   - `tests/` — pytest de la capa operativa (guards, esquema, verificación). `conftest.py`.
 - `variables_modelo.txt` — lista de variables del modelo.
