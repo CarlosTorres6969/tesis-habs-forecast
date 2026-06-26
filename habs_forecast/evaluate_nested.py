@@ -39,6 +39,7 @@ from evaluate_robust import _boot
 
 OUT = os.path.join(C.DIR_REPORTS, "nested_metrics.json")
 ROBUST = os.path.join(C.DIR_REPORTS, "robust_metrics.json")
+PRED_DUMP = os.path.join(C.DIR_REPORTS, "nested_test_predictions.csv")  # para figuras de validacion
 
 TEST_FRAC = 0.25            # ultimo 25% del tiempo = test intacto (~2025-2026)
 PURGE_DAYS = C.VALIDATION["purge_days"]   # embargo entre DEV y TEST
@@ -148,6 +149,7 @@ def main():
     avail = set(df.columns)
     optimistic = json.load(open(ROBUST)) if os.path.exists(ROBUST) else {}
     report = {}
+    dump_rows = []                          # predicciones del TEST intacto (para figuras)
     print("PROTOCOLO ANIDADO: features elegidas SOLO en DEV; TEST intacto evaluado una vez.")
     print(f"TEST = ultimo {int(TEST_FRAC*100)}% del tiempo | embargo {PURGE_DAYS} d entre DEV y TEST\n")
 
@@ -176,9 +178,18 @@ def main():
             chosen = {"_grupo": "+".join(fams)}
             # --- intensidad: XGB entrenado en DEV agrupado -> predice TEST intacto ---
             reg = _model().fit(DEV[feats], DEV["log_chl_target"])
+            test_pred = reg.predict(TEST[feats])
             pooled_y = [TEST["log_chl_target"].values]
-            pooled_yh = [reg.predict(TEST[feats])]
+            pooled_yh = [test_pred]
             pooled_per = [TEST["log_chl_t0"].values]
+            # volcado de predicciones del TEST intacto (mismo split/features) para validar visualmente
+            td = TEST[["group", "horizon", "water_body", "fecha_t0",
+                       "log_chl_target", "log_chl_t0"]].copy()
+            td["pred_log"] = test_pred
+            td["chl_real"] = np.expm1(td["log_chl_target"])
+            td["chl_pred"] = np.clip(np.expm1(td["pred_log"]), 0, None)
+            td["chl_persist"] = np.expm1(td["log_chl_t0"])
+            dump_rows.append(td)
             # --- alerta: ensamble XGB-clf + Red (DEV agrupado) -> PR-AUC en TEST ---
             pooled_hab, pooled_xgbp, pooled_nnp = [], [], []
             if DEV["hab_target"].nunique() > 1:
@@ -215,6 +226,9 @@ def main():
 
     os.makedirs(C.DIR_REPORTS, exist_ok=True)
     json.dump(report, open(OUT, "w"), indent=2)
+    if dump_rows:
+        pd.concat(dump_rows, ignore_index=True).to_csv(PRED_DUMP, index=False)
+        print(f"Predicciones TEST intacto -> {PRED_DUMP}")
     print(f"Reporte -> {OUT}")
     print("Lectura: el SKILL anidado es el numero DEFENDIBLE (test nunca tocado). "
           "Si sigue >0 con IC que no cruza 0 -> skill real, no artefacto de seleccion.")

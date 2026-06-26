@@ -28,6 +28,37 @@ MODELS = C.DIR_MODELS
 REPORTS = C.DIR_REPORTS
 KEY2FOLDER = {meta["key"]: folder for folder, meta in C.REGIONS.items()}
 
+# --- Mascara de agua ESTRICTA solo para los MAPAS (no toca config ni el modelo) ---
+# El umbral del pipeline (NDWI>-0.5) es muy permisivo y en escenas con neblina pinta
+# tierra como "agua". Para VISUALIZAR exigimos agua inequivoca (NDWI claramente
+# positivo) y descartamos pixeles brillantes (nube/neblina). Luego se limpian los
+# blobs dispersos por componentes conectados (conserva el cuerpo y sus brazos).
+NDWI_WATER = 0.0          # agua abierta tiene NDWI > 0 (vs -0.5 del enmascarado del modelo)
+NDVI_LAND  = 0.20         # excluye vegetacion terrestre con mas margen
+BRIGHT_MAX = 0.25         # reflectancia visible media: por encima ~ nube/neblina/nata
+
+
+def _strict_water(B2, B3, B4, B5, B8, eps=1e-10):
+    ndwi = (B3 - B8) / (B3 + B8 + eps)
+    ndvi = (B8 - B4) / (B8 + B4 + eps)
+    bright = (B2 + B3 + B4) / 3.0
+    valid = (B2 > 0) & (B3 > 0) & (B4 > 0) & (B5 > 0) & (B8 > 0)
+    return valid & (ndwi > NDWI_WATER) & (ndvi < NDVI_LAND) & (bright < BRIGHT_MAX)
+
+
+def _clean_mask(water, min_frac=0.02, min_abs=20):
+    """Quita blobs dispersos: conserva componentes >= min_frac del mayor (y >= min_abs).
+    Para Cajon (embalse ramificado) esto mantiene los brazos grandes y borra el ruido."""
+    from scipy import ndimage
+    lab, n = ndimage.label(water)
+    if n == 0:
+        return water
+    sizes = np.bincount(lab.ravel())
+    sizes[0] = 0                                   # fondo
+    thr = max(min_abs, int(min_frac * sizes.max()))
+    keep = np.where(sizes >= thr)[0]
+    return np.isin(lab, keep)
+
 
 def _scene_pixels(path):
     """Lee la escena y devuelve features espectrales por pixel de agua + mascara 2D."""
@@ -38,11 +69,7 @@ def _scene_pixels(path):
     B2, B3, B4, B5, B8 = arr[0], arr[1], arr[2], arr[3], arr[4]
     if np.nanmax(arr) > C.BAND_SCALE_THRESHOLD:
         B2, B3, B4, B5, B8 = (b / 10000.0 for b in (B2, B3, B4, B5, B8))
-    eps = 1e-10
-    ndwi = (B3 - B8) / (B3 + B8 + eps)
-    ndvi = (B8 - B4) / (B8 + B4 + eps)
-    valid = (B2 > 0) & (B3 > 0) & (B4 > 0) & (B5 > 0) & (B8 > 0)
-    water = valid & (ndwi > C.NDWI_MIN) & (ndvi < C.NDVI_MAX)
+    water = _clean_mask(_strict_water(B2, B3, B4, B5, B8))
     idx = C.spectral_indices(B2, B3, B4, B5, B8)
     feats2d = {"B2": B2, "B3": B3, "B4": B4, "B5": B5, "B8": B8,
                "NDCI": idx["NDCI"], "CI_red": idx["CI_red"],
@@ -50,13 +77,49 @@ def _scene_pixels(path):
     return feats2d, water
 
 
-def make_map(wb, h=7):
+def _clear_water_score(path, D=12):
+    """Puntua una escena por COBERTURA de agua LIMPIA (lectura decimada, rapida).
+    Penaliza escenas recortadas (pocos pixeles validos) y nubes (agua brillante).
+    Devuelve el nº de pixeles de agua oscura/limpia escalado a resolucion nativa,
+    de modo que a igual area fisica gana la de mayor resolucion (S2 > Landsat)."""
+    try:
+        with rasterio.open(path) as ds:
+            h0, w0 = ds.height, ds.width
+            oh, ow = max(1, h0 // D), max(1, w0 // D)
+            arr = ds.read(out_shape=(ds.count, oh, ow)).astype("float32")
+    except Exception:
+        return -1.0
+    if arr.shape[0] < 5:
+        return -1.0
+    B2, B3, B4, B5, B8 = arr[0], arr[1], arr[2], arr[3], arr[4]
+    if np.nanmax(arr) > C.BAND_SCALE_THRESHOLD:
+        B2, B3, B4, B5, B8 = (b / 10000.0 for b in (B2, B3, B4, B5, B8))
+    clear = _clean_mask(_strict_water(B2, B3, B4, B5, B8), min_abs=3)  # agua limpia, sin ruido
+    scale = (h0 * w0) / float(oh * ow)           # a "pixeles full equivalentes"
+    return float(clear.sum()) * scale
+
+
+def _best_scene(tifs):
+    """Elige la mejor escena: maxima cobertura de agua limpia (no la mas reciente)."""
+    best, best_score = None, -1.0
+    for p in tifs:
+        s = _clear_water_score(p)
+        if s > best_score:
+            best, best_score = p, s
+    return best
+
+
+def make_map(wb, h=7, scene=None):
     group = GROUP[wb]
     folder = KEY2FOLDER[wb]
     tifs = sorted(glob.glob(os.path.join(C.DIR_IMAGENES, folder, "**", "*.tif"), recursive=True))
     if not tifs:
         print(f"{wb}: sin rasters."); return
-    path = tifs[-1]                                  # ultima escena
+    if scene:                                        # fecha concreta pedida (YYYY-MM-DD)
+        match = [p for p in tifs if scene in os.path.basename(p)]
+        path = match[-1] if match else _best_scene(tifs)
+    else:
+        path = _best_scene(tifs)                     # MEJOR escena (cobertura de agua limpia)
     sp = _scene_pixels(path)
     if sp is None:
         print(f"{wb}: escena invalida."); return
@@ -168,8 +231,10 @@ def main():
     # espacialmente informativo. A +7d el modelo es body-level (sin espectral) -> mapa plano.
     args = sys.argv[1:]
     wb = args[0] if args else "okeechobee"
-    h = int(args[1]) if len(args) > 1 else 1
-    make_map(wb, h)
+    h = int(args[1]) if len(args) > 1 and args[1].isdigit() else 1
+    # 3er argumento opcional: fecha de escena YYYY-MM-DD (si no, se elige la mejor)
+    scene = next((a for a in args[1:] if "-" in a and len(a) == 10), None)
+    make_map(wb, h, scene=scene)
 
 
 if __name__ == "__main__":
