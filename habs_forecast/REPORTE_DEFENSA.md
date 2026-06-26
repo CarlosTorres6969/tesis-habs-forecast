@@ -6,13 +6,13 @@
 
 | Cuerpo | Grupo | Escenas S2 | Pares causales |
 |---|---|---|---|
-| cajon | freshwater | 229 | 221 |
+| cajon | freshwater | 342 | 315 |
 | fonseca | marine | 269 | 1033 |
 | okeechobee | freshwater | 509 | 1726 |
 | tampa_bay | marine | 217 | 902 |
 | yojoa | freshwater | 188 | 395 |
 
-Total: **1412 escenas**, **4277 pares**.
+Total: **1525 escenas**, **4371 pares**.
 
 ## 2. Validación anidada (TEST FINAL INTACTO) — el número defendible
 
@@ -21,20 +21,20 @@ Test = último ~25% del tiempo por (grupo,horizonte), nunca tocado; features ele
 ### Lagos
 | Horizonte | Skill regresión (test intacto) | PR-AUC alerta | n_test | eventos |
 |---|---|---|---|---|
-| +1d | +0.25 [+0.16,+0.34]* | +0.38 [+0.14,+0.68]* | 102 | 6 |
-| +3d | +0.17 [+0.08,+0.24]* | +0.29 [+0.08,+0.63]* | 96 | 8 |
-| +5d | +0.19 [+0.10,+0.28]* | +0.06 [+0.02,+0.12]* | 94 | 5 |
-| +7d | +0.32 [+0.23,+0.38]* | +0.07 [+0.02,+0.18]* | 93 | 3 |
+| +1d | +0.23 [+0.14,+0.31]* | +0.57 [+0.25,+0.88]* | 121 | 8 |
+| +3d | +0.09 [-0.03,+0.21]  | +0.20 [+0.09,+0.39]* | 112 | 11 |
+| +5d | +0.19 [+0.12,+0.27]* | +0.05 [+0.02,+0.10]* | 109 | 6 |
+| +7d | +0.24 [+0.14,+0.32]* | +0.07 [+0.03,+0.14]* | 108 | 6 |
 
 Cuerpos en el test: _grupo.
 
 ### Costa
 | Horizonte | Skill regresión (test intacto) | PR-AUC alerta | n_test | eventos |
 |---|---|---|---|---|
-| +1d | +0.11 [-0.12,+0.33]  | +0.32 [+0.13,+0.55]* | 94 | 13 |
-| +3d | +0.31 [+0.11,+0.52]* | +0.22 [+0.09,+0.44]* | 94 | 11 |
-| +5d | +0.25 [+0.05,+0.44]* | +0.16 [+0.07,+0.31]* | 94 | 12 |
-| +7d | +0.28 [-0.05,+0.48]  | +0.28 [+0.11,+0.47]* | 95 | 14 |
+| +1d | +0.11 [-0.14,+0.32]  | +0.32 [+0.13,+0.55]* | 94 | 13 |
+| +3d | +0.32 [+0.12,+0.52]* | +0.22 [+0.07,+0.46]* | 94 | 11 |
+| +5d | +0.25 [+0.04,+0.43]* | +0.17 [+0.07,+0.32]* | 94 | 12 |
+| +7d | +0.27 [-0.06,+0.50]  | +0.29 [+0.12,+0.51]* | 95 | 14 |
 
 Cuerpos en el test: _grupo.
 
@@ -44,8 +44,8 @@ Cada pronóstico de intensidad lleva una banda **P10–P90** calibrada en el tes
 
 | Grupo | +1d | +3d | +5d | +7d |
 |---|---|---|---|---|
-| Lagos | 0.75 | 0.78 | 0.82 | 0.77 |
-| Costa | 0.89 | 0.84 | 0.77 | 0.79 |
+| Lagos | 0.65 | 0.89 | 0.72 | 0.69 |
+| Costa | 0.89 | 0.85 | 0.77 | 0.79 |
 
 Cobertura ≈0.80 ⇒ intervalos fiables (no sobreconfiados). La banda cruda sin conformalizar quedaba en ~0.45–0.61 (sobreconfiada); CQR la corrige.
 
@@ -55,14 +55,14 @@ Ablación (aporte real de ERA5) y estrés de ruido (skill con ruido al 100% de l
 
 | Grupo | Horiz | Skill con ERA5 | Aporte ERA5 | Skill con ruido 100% |
 |---|---|---|---|---|
-| Lagos | +1d | +0.17 [+0.11,+0.23]* | -0.026 | +0.174 |
-| Lagos | +3d | +0.17 [+0.11,+0.23]* | +0.021 | +0.148 |
-| Lagos | +5d | +0.11 [+0.04,+0.16]* | -0.000 | +0.110 |
-| Lagos | +7d | +0.22 [+0.16,+0.28]* | +0.024 | +0.206 |
-| Costa | +1d | -0.01 [-0.24,+0.16]  | -0.033 | +0.005 |
-| Costa | +3d | +0.14 [-0.00,+0.27]  | -0.002 | +0.122 |
-| Costa | +5d | +0.11 [-0.01,+0.23]  | +0.014 | +0.099 |
-| Costa | +7d | +0.18 [-0.01,+0.33]  | +0.017 | +0.165 |
+| Lagos | +1d | +0.17 [+0.10,+0.23]* | -0.007 | +0.168 |
+| Lagos | +3d | +0.16 [+0.09,+0.22]* | +0.043 | +0.110 |
+| Lagos | +5d | +0.12 [+0.05,+0.17]* | -0.021 | +0.079 |
+| Lagos | +7d | +0.22 [+0.16,+0.27]* | +0.016 | +0.215 |
+| Costa | +1d | -0.01 [-0.22,+0.17]  | -0.040 | +0.002 |
+| Costa | +3d | +0.13 [-0.01,+0.27]  | -0.001 | +0.124 |
+| Costa | +5d | +0.12 [-0.01,+0.24]  | +0.023 | +0.098 |
+| Costa | +7d | +0.17 [-0.01,+0.34]  | +0.015 | +0.173 |
 
 ## 4. Validación del target de Yojoa contra in-situ (fuera de ventana, NO entra al modelo)
 
@@ -80,8 +80,8 @@ Ensamble Red+XGBoost, calibración isotónica + umbral F2 (prioriza recall: perd
 
 | Grupo | Umbral operativo | Recall | Precisión |
 |---|---|---|---|
-| Lagos | 0.09 | 0.81 | 0.17 |
-| Costa | 0.07 | 1.00 | 0.21 |
+| Lagos | 0.06 | 0.81 | 0.17 |
+| Costa | 0.05 | 1.00 | 0.21 |
 
 *(Recall/precisión de la última corrida de `calibrate_alert.py`; recall alto a propósito para alerta temprana.)*
 
