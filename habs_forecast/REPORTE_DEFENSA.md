@@ -16,27 +16,27 @@ Total: **1525 escenas**, **4371 pares**.
 
 ## 2. Validación anidada (TEST FINAL INTACTO) — el número defendible
 
-Test = último ~25% del tiempo por (grupo,horizonte), nunca tocado; features elegidas solo en DEV.
+Test = último ~25% del tiempo por (grupo,horizonte), nunca tocado; features elegidas solo en DEV sobre el DEV agrupado del grupo (una decisión por grupo-horizonte) con regla de parsimonia.
 
 ### Lagos
-| Horizonte | Skill regresión (test intacto) | PR-AUC alerta | n_test | eventos |
-|---|---|---|---|---|
-| +1d | +0.23 [+0.14,+0.31]* | +0.57 [+0.25,+0.88]* | 121 | 8 |
-| +3d | +0.09 [-0.03,+0.21]  | +0.20 [+0.09,+0.39]* | 112 | 11 |
-| +5d | +0.19 [+0.12,+0.27]* | +0.05 [+0.02,+0.12]* | 109 | 6 |
-| +7d | +0.24 [+0.14,+0.32]* | +0.07 [+0.03,+0.14]* | 108 | 6 |
+| Horizonte | Skill regresión (test intacto) | PR-AUC alerta | n_test | eventos | Familias |
+|---|---|---|---|---|---|
+| +1d | +0.23 [+0.14,+0.31]* | +0.57 [+0.25,+0.88]* | 121 | 8 | AUTOREG+ERA5 |
+| +3d | +0.09 [-0.03,+0.21]  | +0.20 [+0.09,+0.39]* | 112 | 11 | AUTOREG+INSITU |
+| +5d | +0.19 [+0.12,+0.27]* | +0.05 [+0.02,+0.12]* | 109 | 6 | AUTOREG+SPECTRAL+INSITU |
+| +7d | +0.24 [+0.14,+0.32]* | +0.07 [+0.03,+0.14]* | 108 | 6 | AUTOREG+ERA5+INSITU |
 
-Cuerpos en el test: _grupo.
+Cuerpos en el test: cajon, okeechobee, yojoa.
 
 ### Costa
-| Horizonte | Skill regresión (test intacto) | PR-AUC alerta | n_test | eventos |
-|---|---|---|---|---|
-| +1d | +0.11 [-0.14,+0.32]  | +0.32 [+0.13,+0.55]* | 94 | 13 |
-| +3d | +0.32 [+0.12,+0.52]* | +0.22 [+0.07,+0.46]* | 94 | 11 |
-| +5d | +0.25 [+0.04,+0.43]* | +0.17 [+0.07,+0.32]* | 94 | 12 |
-| +7d | +0.27 [-0.06,+0.50]  | +0.29 [+0.12,+0.51]* | 95 | 14 |
+| Horizonte | Skill regresión (test intacto) | PR-AUC alerta | n_test | eventos | Familias |
+|---|---|---|---|---|---|
+| +1d | +0.11 [-0.14,+0.32]  | +0.32 [+0.13,+0.55]* | 94 | 13 | AUTOREG+ERA5 |
+| +3d | +0.32 [+0.12,+0.52]* | +0.22 [+0.07,+0.46]* | 94 | 11 | AUTOREG+SPECTRAL |
+| +5d | +0.25 [+0.04,+0.43]* | +0.17 [+0.07,+0.32]* | 94 | 12 | AUTOREG |
+| +7d | +0.27 [-0.06,+0.50]  | +0.29 [+0.12,+0.51]* | 95 | 14 | AUTOREG |
 
-Cuerpos en el test: _grupo.
+Cuerpos en el test: fonseca, tampa_bay.
 
 ### Intervalos de incertidumbre (regresión cuantil conformalizada, CQR)
 

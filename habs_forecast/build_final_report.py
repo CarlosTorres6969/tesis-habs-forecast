@@ -51,23 +51,35 @@ def main():
 
     # --- validacion anidada ---
     nested = _j("nested_metrics.json", {})
+    # cuerpos reales presentes en el TEST intacto, por grupo (desde el volcado de predicciones;
+    # nested_metrics ya no guarda nombres de cuerpo porque la seleccion es AGRUPADA por grupo).
+    test_bodies = {}
+    pred_dump = os.path.join(R, "nested_test_predictions.csv")
+    if os.path.exists(pred_dump):
+        pd_dump = pd.read_csv(pred_dump)
+        test_bodies = {g: sorted(s.unique()) for g, s in pd_dump.groupby("group")["water_body"]}
     A("## 2. Validación anidada (TEST FINAL INTACTO) — el número defendible\n")
-    A("Test = último ~25% del tiempo por (grupo,horizonte), nunca tocado; features elegidas solo en DEV.\n")
+    A("Test = último ~25% del tiempo por (grupo,horizonte), nunca tocado; features elegidas solo en DEV "
+      "sobre el DEV agrupado del grupo (una decisión por grupo-horizonte) con regla de parsimonia.\n")
     for grp in ("freshwater", "marine"):
         if grp not in nested:
             continue
         nm = {"freshwater": "Lagos", "marine": "Costa"}[grp]
         A(f"### {nm}")
-        A("| Horizonte | Skill regresión (test intacto) | PR-AUC alerta | n_test | eventos |")
-        A("|---|---|---|---|---|")
+        A("| Horizonte | Skill regresión (test intacto) | PR-AUC alerta | n_test | eventos | Familias |")
+        A("|---|---|---|---|---|---|")
         for h in ("1", "3", "5", "7"):
             nd = nested[grp].get(h)
             if not nd:
                 continue
+            fam = nd.get("features_per_body", {}).get("_grupo", "—")
             A(f"| +{h}d | {fmt_ci(nd['skill_nested'])} | {fmt_ci(nd['pr_auc_nested'])} | "
-              f"{nd['n_test']} | {nd['pos_test']} |")
-        bodies = sorted({b for h in nested[grp].values() for b in h.get("features_per_body", {})})
-        A(f"\nCuerpos en el test: {', '.join(bodies)}.\n")
+              f"{nd['n_test']} | {nd['pos_test']} | {fam} |")
+        bodies = test_bodies.get(grp, [])
+        if bodies:
+            A(f"\nCuerpos en el test: {', '.join(bodies)}.\n")
+        else:
+            A("")
 
     # --- intervalos de incertidumbre (CQR) ---
     iv = _j("interval_metrics.json", {})
