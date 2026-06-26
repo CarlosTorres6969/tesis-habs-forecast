@@ -175,6 +175,8 @@ Figuras, notebook limpio que reemplace los viejos, redacción de tesis.
 - `evaluate_intervals.py` — valida cobertura de los **intervalos de incertidumbre P10–P90 (CQR)**.
 - `check_integrity.py` — **test de integridad ejecutable** (sin fuga / causal / consistente); 11/11 OK.
 - `run_pipeline.py` — orquesta el pipeline de modelado en orden (reproducibilidad).
+- `Modelo_HABs_limpio.ipynb` — **notebook reproducible** (anexo) que reemplaza los .ipynb viejos
+  con fuga; lo genera `build_notebook.py` y se ejecuta con nbconvert (20 celdas, 0 errores).
 - `era5_sensitivity.py` — **sensibilidad ERA5 reanálisis vs pronóstico** (ablación + ruido #5).
 - `train_final.py` / `predict.py` / `calibrate_alert.py` / `make_maps.py` — sistema desplegable.
 - `variables_modelo.txt` — lista de variables del modelo.
