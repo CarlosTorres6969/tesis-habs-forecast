@@ -7,12 +7,12 @@
 | Cuerpo | Grupo | Escenas S2 | Pares causales |
 |---|---|---|---|
 | cajon | freshwater | 342 | 315 |
-| fonseca | marine | 269 | 1033 |
+| fonseca | marine | 269 | 1046 |
 | okeechobee | freshwater | 509 | 1726 |
-| tampa_bay | marine | 217 | 902 |
+| tampa_bay | marine | 217 | 923 |
 | yojoa | freshwater | 188 | 395 |
 
-Total: **1525 escenas**, **4371 pares**.
+Total: **1525 escenas**, **4405 pares**.
 
 ## 2. Validación anidada (TEST FINAL INTACTO) — el número defendible
 
@@ -23,18 +23,18 @@ Test = último ~25% del tiempo por (grupo,horizonte), nunca tocado; features ele
 |---|---|---|---|---|---|
 | +1d | +0.23 [+0.14,+0.31]* | +0.57 [+0.25,+0.88]* | 121 | 8 | AUTOREG+ERA5 |
 | +3d | +0.09 [-0.03,+0.21]  | +0.20 [+0.09,+0.39]* | 112 | 11 | AUTOREG+INSITU |
-| +5d | +0.19 [+0.12,+0.27]* | +0.05 [+0.02,+0.12]* | 109 | 6 | AUTOREG+SPECTRAL+INSITU |
-| +7d | +0.24 [+0.14,+0.32]* | +0.07 [+0.03,+0.14]* | 108 | 6 | AUTOREG+ERA5+INSITU |
+| +5d | +0.14 [+0.08,+0.20]* | +0.06 [+0.02,+0.11]* | 109 | 6 | AUTOREG+ERA5+INSITU |
+| +7d | +0.24 [+0.14,+0.32]* | +0.08 [+0.03,+0.20]* | 108 | 6 | AUTOREG+ERA5+INSITU |
 
 Cuerpos en el test: cajon, okeechobee, yojoa.
 
 ### Costa
 | Horizonte | Skill regresión (test intacto) | PR-AUC alerta | n_test | eventos | Familias |
 |---|---|---|---|---|---|
-| +1d | +0.11 [-0.14,+0.32]  | +0.32 [+0.13,+0.55]* | 94 | 13 | AUTOREG+ERA5 |
-| +3d | +0.32 [+0.12,+0.52]* | +0.22 [+0.07,+0.46]* | 94 | 11 | AUTOREG+SPECTRAL |
-| +5d | +0.25 [+0.04,+0.43]* | +0.17 [+0.07,+0.32]* | 94 | 12 | AUTOREG |
-| +7d | +0.27 [-0.06,+0.50]  | +0.29 [+0.12,+0.51]* | 95 | 14 | AUTOREG |
+| +1d | +0.23 [+0.00,+0.44]* | +0.37 [+0.11,+0.60]* | 98 | 13 | AUTOREG |
+| +3d | +0.33 [+0.11,+0.50]* | +0.27 [+0.09,+0.52]* | 96 | 10 | AUTOREG+SPECTRAL+INSITU |
+| +5d | +0.30 [+0.08,+0.49]* | +0.10 [+0.06,+0.18]* | 99 | 12 | AUTOREG+SPECTRAL |
+| +7d | +0.26 [-0.08,+0.50]  | +0.32 [+0.13,+0.55]* | 96 | 13 | AUTOREG |
 
 Cuerpos en el test: fonseca, tampa_bay.
 
@@ -45,7 +45,7 @@ Cada pronóstico de intensidad lleva una banda **P10–P90** calibrada en el tes
 | Grupo | +1d | +3d | +5d | +7d |
 |---|---|---|---|---|
 | Lagos | 0.65 | 0.89 | 0.72 | 0.69 |
-| Costa | 0.89 | 0.85 | 0.77 | 0.79 |
+| Costa | 0.78 | 0.82 | 0.83 | 0.80 |
 
 Cobertura ≈0.80 ⇒ intervalos fiables (no sobreconfiados). La banda cruda sin conformalizar quedaba en ~0.45–0.61 (sobreconfiada); CQR la corrige.
 
@@ -80,7 +80,7 @@ Ensamble Red+XGBoost, calibración isotónica + umbral F2 (prioriza recall: perd
 
 | Grupo | Umbral operativo | Recall | Precisión |
 |---|---|---|---|
-| Lagos | 0.07 | 0.81 | 0.17 |
+| Lagos | 0.08 | 0.81 | 0.17 |
 | Costa | 0.05 | 1.00 | 0.21 |
 
 *(Recall/precisión de la última corrida de `calibrate_alert.py`; recall alto a propósito para alerta temprana.)*

@@ -107,22 +107,23 @@ Re-corrida la validación anidada, el antes/después (skill de regresión, IC95%
   empatadas en DEV se elige la de menos familias (parsimonia, regla anti-sobreajuste de selección).
   Esto **redujo la varianza de selección y subió los números honestos**.
 
-  > **NÚMEROS OFICIALES (reconciliados 2026-06-26)** — test intacto, IC95% bootstrap,
-  > `*`=significativo (IC no cruza 0). Esta tabla es la **única fuente de verdad** y coincide
-  > exactamente con `REPORTE_DEFENSA.md` y `artifacts/reports/nested_metrics.json`. Incluye Cajón
-  > (densificado con Landsat); los valores intermedios mencionados en otras secciones de este
-  > documento (p.ej. +7d lagos 0.32, pre-Cajón) quedan **superados** por estos.
+  > **NÚMEROS OFICIALES (reconciliados 2026-06-26, con OLCI fresco + orden canónico)** — test
+  > intacto, IC95% bootstrap, `*`=significativo (IC no cruza 0). Esta tabla es la **única fuente de
+  > verdad** y coincide exactamente con `REPORTE_DEFENSA.md` y `artifacts/reports/nested_metrics.json`.
+  > Incluye Cajón (Landsat) y **target costero OLCI extendido a junio 2026**. El pipeline es ahora
+  > **REPRODUCIBLE** (orden canónico de pares, ver más abajo): dos corridas dan números idénticos.
 
   | Horiz | LAGOS | COSTA |
   |------|-------|-------|
-  | +1d | +0.23 [.14,.31]* | +0.11 [−.14,.32] |
-  | +3d | +0.09 [−.03,.21] | +0.32 [.12,.52]* |
-  | +5d | +0.19 [.12,.27]* | +0.25 [.04,.43]* |
-  | +7d | +0.24 [.14,.32]* | +0.27 [−.06,.50] |
+  | +1d | +0.23 [.14,.31]* | +0.23 [.00,.44]* |
+  | +3d | +0.09 [−.03,.21] | +0.33 [.11,.50]* |
+  | +5d | +0.14 [.08,.20]* | +0.30 [.08,.49]* |
+  | +7d | +0.24 [.14,.32]* | +0.26 [−.08,.50] |
 
-  Lagos significativos a **+1d, +5d y +7d** (+3d no significativo tras incluir Cajón, el cuerpo más
-  difícil); costa significativa a **+3d y +5d** (+1d y +7d no significativos, IC cruza 0). Alerta
-  lagos PR-AUC +1d 0.57. Cuerpos en el test: lagos = Okeechobee/Yojoa/Cajón, costa = Tampa/Fonseca.
+  Lagos significativos a **+1d, +5d y +7d** (+3d no significativo). Costa: **gran salto con OLCI
+  fresco** — ahora significativa a **+1d (borderline, IC inf ≈0), +3d y +5d** (antes +1d no era
+  significativo); +7d aún incierto. Alerta lagos PR-AUC +1d 0.57. Cuerpos en el test: lagos =
+  Okeechobee/Yojoa/Cajón, costa = Tampa/Fonseca.
 - **NO ADOPTADO — features de dinámica temporal + estacionalidad** (`DYNAMICS`, `SEASONAL`, causales,
   construidas en `match_pairs.py`): probadas con `HABS_NEWFEATS=1` en validación anidada CONTROLADA
   (con vs sin, mismo protocolo y datos). Veredicto: **lavado** (mejoran +5d lagos pero empeoran +3d
@@ -244,9 +245,30 @@ histórico) · `python verify_forecasts.py` (evalúa lo madurado) · `python bui
   recién reconciliados (rendimiento decreciente); #5 requiere login interactivo de Copernicus y, sin
   OLCI denso, la costa +1d/+7d no mejora. Quedan como opcionales a criterio del usuario.
 
+## OLCI COSTA FRESCO + REPRODUCIBILIDAD (2026-06-26) — HECHO
+- **#5 OLCI costa — ADOPTADO (mejora real):** se re-bajó el target Sentinel-3 OLCI 300 m extendiendo
+  la cobertura a **junio 2026** (antes terminaba feb 2026): Tampa 1090→1112, Fonseca 1061→1082 días.
+  `fetch_olci_chl.py` (T1 a 2026-06-30) → `build_combined_target.py` (costa usa OLCI). RESULTADO:
+  **costa mejora de forma defendible** — +1d pasa de **NO significativo (0.11) a significativo (0.23,
+  borderline)**, +5d 0.25→**0.30**, +3d 0.32→0.33. A diferencia de Cajón (escenas nubosas = ruido,
+  revertido), el OLCI fresco es **dato bueno** y además deja el target costero al día para la operación.
+  (Token openeo cacheado válido; no requirió re-login.)
+- **Bug de reproducibilidad encontrado y CORREGIDO:** al reconstruir los pares, el skill de lagos +5d
+  "bailaba" (0.19↔0.14). Causa raíz: **XGBoost con `subsample`/`colsample` y seed fijo muestrea filas
+  según su POSICIÓN**; si el orden del DataFrame cambia (al reconstruir con otro cuerpo), el mismo seed
+  toma filas distintas → modelo distinto. FIX en `match_pairs.py`: **orden canónico** de los pares
+  (`sort_values(["water_body","horizon","fecha_t0","fecha_target"])`) antes de guardar. Verificado: dos
+  corridas de `evaluate_nested.py` dan resultados **idénticos** (`diff` vacío). El pipeline es ahora
+  reproducible corrida a corrida — refuerza la defensa (vs. sistema viejo con fuga).
+- **Costo honesto:** con el orden canónico, lagos +5d se asienta en **0.14** (antes 0.19; sigue
+  significativo, IC [.08,.20]). No es degradación real: las dos familias (`SPECTRAL+INSITU` vs
+  `ERA5+INSITU`) estaban casi empatadas y el orden estable desempató reproduciblemente.
+- **Reconciliado:** ESTADO + `REPORTE_DEFENSA.md` + `nested_metrics.json` + figuras coinciden con los
+  números nuevos. `check_integrity` 14/14.
+
 ## QUÉ SIGUE (pendiente)
 Modelos en estado de defensa. Quedan, cuando el usuario lo indique (EN PAUSA): notebook limpio y
-redacción de tesis. (Figuras de validación + mapas + capa operativa: HECHOS.)
+redacción de tesis. (Figuras de validación + mapas + capa operativa + OLCI costa: HECHOS.)
 
 ## EN PAUSA (no hacer hasta que el usuario lo pida)
 Figuras, notebook limpio que reemplace los viejos, redacción de tesis.
