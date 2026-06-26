@@ -16,7 +16,8 @@ from __future__ import annotations
 import subprocess, sys, time, os
 
 STEPS = [
-    ("Estado por escena (rasters S2 -> predictores)",        "build_scene_state.py"),
+    ("Estado por escena (rasters S2 + Landsat -> predictores)", "build_scene_state.py"),
+    ("Harmonizacion cross-sensor Landsat -> escala S2",       "harmonize_landsat.py"),
     ("Correccion de sesgo del target (Okeechobee vs in-situ)", "bias_correct_target.py"),
     ("Target combinado por cuerpo (OLCI costa + VIIRS lagos)", "build_combined_target.py"),
     ("Pares causales (predictor t0 -> target t0+h, sin fuga)", "match_pairs.py"),

@@ -157,6 +157,15 @@ LIMITACIÓN declarada: offset cross-sensor (reflectancias Landsat ~3× menores q
 modelo (el backbone autorregresivo, independiente del sensor, sostiene el skill). NO se expande
 Landsat a Yojoa/Fonseca/Tampa (ya pasan con S2; solo los diluiría). `check_integrity` sigue 11/11.
 
+**Harmonización cross-sensor** (`harmonize_landsat.py`): se corrige el offset alineando momentos
+(media+desv) de las bandas Landsat a la escala de S2 en fechas cercanas (la regresión OLS fallaba,
+R²≈0). RESULTADO: skill **idéntico** → la harmonización es **inerte** para el pronóstico, por dos
+razones: (1) lagos casi no usa SPECTRAL (familias AUTOREG+ERA5/INSITU dominan), y (2) XGBoost es
+invariante a transformaciones lineales por feature. **Hallazgo:** el pronóstico es **robusto al
+offset cross-sensor** (la limitación no tiene impacto práctico). Se conserva como higiene de datos
+(alinea sensores, beneficia a la red neuronal escalada). `match_pairs` usa el estado harmonizado si
+existe (`scene_state_harmonized.csv`).
+
 ## QUÉ SIGUE (pendiente)
 Modelos en estado de defensa. Quedan, cuando el usuario lo indique (EN PAUSA): figuras, notebook
 limpio y redacción de tesis.
@@ -173,6 +182,8 @@ Figuras, notebook limpio que reemplace los viejos, redacción de tesis.
 - `fetch_s2_scenes.py` — **descarga incremental de más escenas Sentinel-2 (GEE)** para densificar
   cuerpos débiles (requiere auth GEE + EE_PROJECT; `S2_MAXCLOUD` y cuerpos por argumento). Local.
 - `fetch_landsat_scenes.py` — **descarga Landsat 8/9 (GEE)** para densificar Cajón (sin red-edge).
+- `harmonize_landsat.py` — alinea (momentos) las bandas Landsat a la escala de S2; inerte pero
+  higiene de datos correcta. Genera `scene_state_harmonized.csv`.
 - `validate_yojoa_insitu.py` — valida el target VIIRS de Yojoa vs Secchi in-situ 2018–2022 (fuera
   del modelo, no entrena). Salida: `artifacts/validation_yojoa/`.
 - `build_final_report.py` — consolida todos los números definitivos en `REPORTE_DEFENSA.md`.

@@ -18,7 +18,9 @@ import numpy as np
 import pandas as pd
 import config as C
 
-SCENE_FILE  = os.path.join(C.DIR_STATE, "scene_state.csv")
+_SCENE_RAW  = os.path.join(C.DIR_STATE, "scene_state.csv")
+_SCENE_HARM = os.path.join(C.DIR_STATE, "scene_state_harmonized.csv")   # Landsat ajustado a S2
+SCENE_FILE  = _SCENE_HARM if os.path.exists(_SCENE_HARM) else _SCENE_RAW
 # target optimo por cuerpo: combinado (OLCI costa + VIIRS-corregido lagos) > corregido > crudo
 _COMB = os.path.join(C.DIR_OUT, "targets", "combined_target.csv")
 _CORR = os.path.join(C.DIR_OUT, "targets", "satellite_chl_corrected.csv")
