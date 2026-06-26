@@ -40,6 +40,21 @@ def main():
     # 7) target (log_chl_target) NO esta dentro de FEATURES
     chk("El target no aparece como feature", "log_chl_target" not in FEATURES)
 
+    # --- Checks ESTATICOS de la CAPA OPERATIVA (guards; sin datos ni torch -> corren en CI) ---
+    import guards
+    # 12) severidad de confianza bien formada: ordenada peor->mejor, termina en OK e incluye guardas
+    sev = C.CONFIDENCE_SEVERITY
+    ok_sev = sev[-1] == "OK" and {"LOW_COVERAGE", "STALE", "EXPLORATORIO"}.issubset(set(sev))
+    chk("Severidad de confianza bien formada (termina en OK)", ok_sev, f"sev={sev}")
+    # 13) la guarda reporta la PEOR condicion (vacio->OK; LOW_COVERAGE manda sobre STALE)
+    ok_worst = (guards.worst_confidence([]) == "OK" and
+                guards.worst_confidence(["STALE", "LOW_COVERAGE"]) == "LOW_COVERAGE")
+    chk("Guarda de confianza: vacio=OK y respeta la peor condicion", ok_worst)
+    # 14) los cuerpos exploratorios son cuerpos validos definidos en config
+    bodies = {m["key"] for m in C.REGIONS.values()}
+    chk("EXPLORATORY_BODIES son cuerpos validos", set(C.EXPLORATORY_BODIES).issubset(bodies),
+        f"desconocidos={set(C.EXPLORATORY_BODIES) - bodies}")
+
     # --- Checks que requieren los PARES (se omiten en CI si no hay datos) ---
     if not os.path.exists(PAIRS):
         print("(sin pares en disco -> solo checks estaticos; en CI esto es esperado)")

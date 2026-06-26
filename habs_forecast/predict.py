@@ -22,6 +22,7 @@ import torch
 import config as C
 from train import SPECTRAL, AUTOREG, ERA5 as ERA5F
 from train_nn import HABNet
+import guards
 
 T = os.path.join(C.DIR_OUT, "targets")
 SCENE = os.path.join(C.DIR_STATE, "scene_state.csv")
@@ -95,25 +96,31 @@ def build_features(wb, t0):
     return pd.DataFrame([row]), float(chl0), t0
 
 
-def predict_body(wb, t0=None):
+def forecast_body(wb, t0=None):
+    """Pronostico ESTRUCTURADO 0-7 d para un cuerpo (sin imprimir). Fuente unica de verdad
+    de la inferencia: la reusa tanto predict_body (CLI) como run_forecast (bucle operativo).
+    Causal: solo datos <= t0 (build_features). Devuelve un dict con metadatos + lista por
+    horizonte (chl_pred, p10, p90, prob_riesgo, riesgo), o None si faltan datos."""
     group = GROUP[wb]
     sc = _load(SCENE, wb).sort_values("fecha")
     if sc.empty:
-        print(f"{wb}: sin escenas."); return
+        return None
     t0 = sc["fecha"].max() if t0 is None else pd.Timestamp(t0).normalize()
+    scpast = sc[sc["fecha"] <= t0]
+    if scpast.empty:
+        return None
+    n_water_px = int(scpast.iloc[-1]["n_water_px"]) if "n_water_px" in scpast.columns else None
     built = build_features(wb, t0)
     if built is None:
-        print(f"{wb}: sin datos suficientes en {t0.date()}"); return
+        return None
     X, chl0, t0 = built
     thr_body = joblib.load(os.path.join(MODELS, "thr_body.pkl")).get(wb, 10.0)
     # calibrador + umbral operativo de alerta (calibrate_alert.py)
     calib_f = os.path.join(MODELS, f"alert_calib_{group}.pkl")
     calib = joblib.load(calib_f) if os.path.exists(calib_f) else None
-
     pthr = calib["threshold"] if calib is not None else 0.5
-    print(f"\n=== {wb.upper()} ({group}) | t0={t0.date()} | chl-a actual={chl0:.1f} ug/L | "
-          f"biomasa alta (chl-a)>={thr_body:.1f} ug/L | dispara si prob>={pthr:.2f} ===")
-    print(f"  {'horizonte':10s} {'chl-a_pred(ug/L)':>16s} {'banda P10-P90':>16s} {'prob_riesgo':>12s} {'RIESGO':>8s}")
+
+    horizons = []
     for h in [1, 3, 5, 7]:
         f = os.path.join(MODELS, f"{group}_h{h}.pkl")
         if not os.path.exists(f):
@@ -123,13 +130,12 @@ def predict_body(wb, t0=None):
         Xh = X.reindex(columns=feats)              # asegura columnas/orden del modelo
         chl = float(np.expm1(b["reg"].predict(Xh)[0]))
         # banda de incertidumbre (CQR P10-P90 + offset conformal), en ug/L
-        banda = ""
+        p10 = p90 = None
         if b.get("qlo") is not None:
             Qc = b.get("q_conformal", 0.0)
             a, c = float(b["qlo"].predict(Xh)[0]), float(b["qhi"].predict(Xh)[0])
-            lo = max(float(np.expm1(min(a, c) - Qc)), 0.0)
-            hi = float(np.expm1(max(a, c) + Qc))
-            banda = f"{lo:.1f}-{hi:.1f}"
+            p10 = max(float(np.expm1(min(a, c) - Qc)), 0.0)
+            p90 = float(np.expm1(max(a, c) + Qc))
         # alerta: ensamble XGB_clf + Red
         probs = []
         if b["clf"] is not None:
@@ -141,12 +147,31 @@ def predict_body(wb, t0=None):
             _, logit = net(torch.tensor(Xs, dtype=torch.float32))
             probs.append(float(torch.sigmoid(logit)[0]))
         p = float(np.mean(probs))
-        if calib is not None:                       # calibrar + umbral operativo
+        if calib is not None:                       # calibrar a probabilidad operativa
             p = float(calib["iso"].predict([p])[0])
-            alerta = "SI" if p >= calib["threshold"] else "no"
-        else:
-            alerta = "SI" if p >= 0.5 else "no"
-        print(f"  +{h}d{'':6s} {chl:>16.1f} {banda:>16s} {p:>12.2f} {alerta:>8s}")
+        horizons.append({"horizon": h, "chl_pred": chl, "p10": p10, "p90": p90,
+                         "prob_riesgo": p, "riesgo": bool(p >= pthr)})
+    return {"water_body": wb, "group": group, "t0": t0, "chl0": float(chl0),
+            "thr_body": float(thr_body), "n_water_px": n_water_px,
+            "alert_threshold": float(pthr), "horizons": horizons}
+
+
+def predict_body(wb, t0=None):
+    fc = forecast_body(wb, t0)
+    if fc is None:
+        print(f"{wb}: sin escenas / datos suficientes."); return
+    t0 = fc["t0"]
+    confianza, flags, age = guards.evaluate_guards(wb, t0, fc["n_water_px"])
+    nota_conf = f" | confianza={confianza}" + (f" ({', '.join(flags)})" if flags else "")
+    print(f"\n=== {wb.upper()} ({fc['group']}) | t0={t0.date()} (hace {age}d) | "
+          f"chl-a actual={fc['chl0']:.1f} ug/L | biomasa alta (chl-a)>={fc['thr_body']:.1f} ug/L | "
+          f"dispara si prob>={fc['alert_threshold']:.2f}{nota_conf} ===")
+    print(f"  {'horizonte':10s} {'chl-a_pred(ug/L)':>16s} {'banda P10-P90':>16s} {'prob_riesgo':>12s} {'RIESGO':>8s}")
+    for hh in fc["horizons"]:
+        banda = f"{hh['p10']:.1f}-{hh['p90']:.1f}" if hh["p10"] is not None else ""
+        alerta = "SI" if hh["riesgo"] else "no"
+        print(f"  +{hh['horizon']}d{'':6s} {hh['chl_pred']:>16.1f} {banda:>16s} "
+              f"{hh['prob_riesgo']:>12.2f} {alerta:>8s}")
     print("  Nota: RIESGO = biomasa algal elevada (clorofila-a anomala), NO confirma toxicidad; "
           "requiere verificacion de campo.")
     print("  Banda P10-P90 = intervalo de incertidumbre calibrado (CQR, cobertura ~80%).")

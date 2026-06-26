@@ -166,3 +166,18 @@ VALIDATION = {
 }
 # Baselines obligatorios que el modelo debe superar
 BASELINES = ["persistence", "climatology"]
+
+# --------------------------------------------------------------------------------------
+# Capa OPERATIVA (alerta en produccion): guardas de frescura/cobertura y confianza.
+#   No afectan el modelado ni los numeros de validacion: gobiernan COMO se reporta cada
+#   pronostico operativo (run_forecast.py / predict.py via guards.py).
+# --------------------------------------------------------------------------------------
+DIR_FORECASTS = os.path.join(DIR_OUT, "forecasts")   # snapshots + bitacora de pronosticos
+os.makedirs(DIR_FORECASTS, exist_ok=True)
+
+MAX_DATA_AGE_DAYS = 14            # escena t0 mas vieja que esto -> confianza STALE (dato viejo)
+EXPLORATORY_BODIES = ["cajon"]   # cuerpos en estado exploratorio (sin validacion suficiente)
+# Severidad de las guardas, de PEOR a mejor: 'confianza' toma la PEOR condicion aplicable.
+#   LOW_COVERAGE (la escena casi no tiene agua valida; no fiable) es lo mas grave; luego STALE
+#   (dato desactualizado); luego EXPLORATORIO (cuerpo sin verdad de campo); OK = sin reparos.
+CONFIDENCE_SEVERITY = ["LOW_COVERAGE", "STALE", "EXPLORATORIO", "OK"]
