@@ -145,6 +145,18 @@ Re-corrida la validación anidada, el antes/después (skill de regresión, IC95%
 - Fix de datos: `match_pairs.py` ahora elimina **duplicados exactos** (se quitaron 97; 4374→4277
   pares). Las escenas distintas del mismo día (espectro diferente) se conservan (legítimas).
 
+## LANDSAT 8/9 PARA CAJÓN (2026-06-25) — ADOPTADO solo en Cajón
+`fetch_landsat_scenes.py` (GEE, LC08+LC09 C02 L2 SR, máscara QA_PIXEL) + `build_scene_state.py`
+ahora consciente del sensor (Landsat = 4 bandas blue/green/red/NIR; SIN red-edge → NDCI/CI_red/FAI
+quedan NaN, XGBoost los maneja). Se bajaron 145 escenas Landsat de Cajón (113 pasan máscara de agua).
+RESULTADO: Cajón pasó de **no evaluable** (pares insuficientes) a **dentro del test anidado**
+(pares 78/64/64/65 por horizonte). Cajón solo predice a horizonte LARGO (+5d/+7d skill ~+0.42),
+débil a +1d/+3d. Lagos ahora = **3 cuerpos** (Okeechobee+Yojoa+Cajón); el pool baja algo a +3d/+7d
+porque Cajón es el más difícil, pero entra en la ventana 0–7 d (decisión del usuario: incluirlo).
+LIMITACIÓN declarada: offset cross-sensor (reflectancias Landsat ~3× menores que S2); no rompe el
+modelo (el backbone autorregresivo, independiente del sensor, sostiene el skill). NO se expande
+Landsat a Yojoa/Fonseca/Tampa (ya pasan con S2; solo los diluiría). `check_integrity` sigue 11/11.
+
 ## QUÉ SIGUE (pendiente)
 Modelos en estado de defensa. Quedan, cuando el usuario lo indique (EN PAUSA): figuras, notebook
 limpio y redacción de tesis.
@@ -160,6 +172,7 @@ Figuras, notebook limpio que reemplace los viejos, redacción de tesis.
 - `fetch_satellite_chl.py` / `fetch_olci_chl.py` — target satelital (VIIRS / OLCI).
 - `fetch_s2_scenes.py` — **descarga incremental de más escenas Sentinel-2 (GEE)** para densificar
   cuerpos débiles (requiere auth GEE + EE_PROJECT; `S2_MAXCLOUD` y cuerpos por argumento). Local.
+- `fetch_landsat_scenes.py` — **descarga Landsat 8/9 (GEE)** para densificar Cajón (sin red-edge).
 - `validate_yojoa_insitu.py` — valida el target VIIRS de Yojoa vs Secchi in-situ 2018–2022 (fuera
   del modelo, no entrena). Salida: `artifacts/validation_yojoa/`.
 - `build_final_report.py` — consolida todos los números definitivos en `REPORTE_DEFENSA.md`.
