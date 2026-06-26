@@ -93,16 +93,73 @@ def make_map(wb, h=7):
     thr = joblib.load(os.path.join(MODELS, "thr_body.pkl")).get(wb, 10.0)
     os.makedirs(REPORTS, exist_ok=True)
     out = os.path.join(REPORTS, f"mapa_{wb}_h{h}.png")
+
+    # --- fondo satelital color verdadero (RGB = B4,B3,B2) con realce por percentiles ---
+    rgb = np.dstack([feats2d["B4"], feats2d["B3"], feats2d["B2"]]).astype("float32")
+    finite = np.isfinite(rgb).all(axis=2) & (rgb.sum(axis=2) > 0)
+    rgbn = np.zeros_like(rgb)
+    for k in range(3):
+        ch = rgb[:, :, k]
+        lo, hi = np.nanpercentile(ch[finite], 2), np.nanpercentile(ch[finite], 98)
+        rgbn[:, :, k] = np.clip((ch - lo) / (hi - lo + 1e-9), 0, 1) ** 0.8   # gamma
+    rgbn[~finite] = 0.0
+
+    # --- recorte: enfoca el cuerpo de agua y elimina los bordes negros sin dato ---
+    rows, cols = np.any(water, axis=1), np.any(water, axis=0)
+    if rows.any() and cols.any():
+        r0, r1 = np.where(rows)[0][[0, -1]]
+        c0, c1 = np.where(cols)[0][[0, -1]]
+        mr = max(int(0.08 * (r1 - r0)), 8)        # margen ~8% para dar contexto de orilla
+        mc = max(int(0.08 * (c1 - c0)), 8)
+        r0, r1 = max(r0 - mr, 0), min(r1 + mr + 1, H)
+        c0, c1 = max(c0 - mc, 0), min(c1 + mc + 1, W)
+        rgbn = rgbn[r0:r1, c0:c1]
+        grid = grid[r0:r1, c0:c1]
+        water = water[r0:r1, c0:c1]
+
+    from matplotlib.patches import Patch
+    from matplotlib.lines import Line2D
+    chl_ma = np.ma.masked_invalid(grid)                    # clorofila solo en agua
+    # color anclado al p98 de la escena -> resalta la variacion espacial DENTRO del cuerpo
+    # (el "donde hay mas biomasa"); el riesgo absoluto se marca con el contorno rojo (>= thr).
     vmax = float(np.nanpercentile(grid, 98)) or 1.0
-    plt.figure(figsize=(9, 7))
-    plt.imshow(grid, cmap="turbo", vmin=0, vmax=max(vmax, thr))
-    plt.colorbar(label="Clorofila-a prevista (ug/L) ~ biomasa algal")
     pct_alert = float(np.nanmean(grid >= thr) * 100)
-    plt.title(f"Pronostico +{h}d — {wb} | escena {t0.date() if t0 is not None else '?'}\n"
-              f"clorofila-a media={np.nanmean(grid):.1f} ug/L | "
-              f"area de riesgo / biomasa alta (>= {thr:.0f})={pct_alert:.0f}%")
-    plt.axis("off"); plt.tight_layout(); plt.savefig(out, dpi=110); plt.close()
-    print(f"  {wb} +{h}d -> {out} | chl-a media={np.nanmean(grid):.1f} ug/L "
+    chlmean = float(np.nanmean(grid))
+    waterf = water.astype("float32")
+    riskf = np.where(np.isfinite(grid) & (grid >= thr), 1.0, 0.0)
+    # tierra en GRIS (luminancia) para separar claramente agua (color) de terreno
+    gray = 0.299 * rgbn[:, :, 0] + 0.587 * rgbn[:, :, 1] + 0.114 * rgbn[:, :, 2]
+    base_gray = np.dstack([gray, gray, gray])
+
+    fig, ax = plt.subplots(1, 2, figsize=(15, 7.2))
+    # Panel 1: contexto satelital real + contorno del cuerpo de agua
+    ax[0].imshow(rgbn)
+    ax[0].contour(waterf, levels=[0.5], colors="cyan", linewidths=1.0)
+    ax[0].set_title("1) Imagen satelital real\nlinea cian = borde del cuerpo de agua analizado", fontsize=11)
+
+    # Panel 2: tierra en gris, agua coloreada por biomasa, contorno rojo = zona de riesgo
+    ax[1].imshow(base_gray)
+    im = ax[1].imshow(chl_ma, cmap="turbo", vmin=0, vmax=vmax)
+    if riskf.sum() > 0:
+        ax[1].contour(riskf, levels=[0.5], colors="red", linewidths=1.6)
+    cb = fig.colorbar(im, ax=ax[1], fraction=0.046, pad=0.04)
+    cb.set_label("Clorofila-a prevista (ug/L) — biomasa algal", fontsize=9)
+    ax[1].set_title(f"2) Donde se espera mas biomasa algal (a +{h} dias)\n"
+                    f"tierra = gris  ·  agua = color (azul bajo -> rojo alto)", fontsize=11)
+    leg = [Patch(facecolor="0.6", label="Tierra (gris, fuera del analisis)"),
+           Patch(facecolor="#2b3ff5", label="Agua: biomasa BAJA"),
+           Patch(facecolor="#d62718", label="Agua: biomasa ALTA (posible floracion)"),
+           Line2D([0], [0], color="red", lw=2, label=f"Zona de RIESGO (>= {thr:.0f} ug/L)")]
+    ax[1].legend(handles=leg, loc="lower left", fontsize=8, framealpha=0.92)
+    for a in ax:
+        a.set_xticks([]); a.set_yticks([])
+    fig.suptitle(f"{wb.upper()} ({'lago' if group=='freshwater' else 'costa'}) — pronostico de riesgo de "
+                 f"biomasa algal a +{h} dias  |  escena {t0.date() if t0 is not None else '?'}\n"
+                 f"clorofila-a media = {chlmean:.1f} ug/L   ·   area en riesgo = {pct_alert:.0f}%   "
+                 f"(herramienta de alerta; NO confirma toxicidad, requiere verificacion de campo)",
+                 fontsize=12)
+    plt.tight_layout(rect=(0, 0, 1, 0.92)); plt.savefig(out, dpi=130, bbox_inches="tight"); plt.close()
+    print(f"  {wb} +{h}d -> {out} | chl-a media={chlmean:.1f} ug/L "
           f"| area de riesgo/biomasa alta={pct_alert:.0f}%")
 
 
