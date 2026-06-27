@@ -1,0 +1,11 @@
+# Tema "acuatico" para la demo de HABs (agua dulce / costa + algas).
+# Claro para que las figuras matplotlib (fondo blanco) se integren bien.
+[theme]
+primaryColor = "#0fa3a3"               # teal: botones y acentos
+backgroundColor = "#f2fbfa"            # blanco con tinte agua
+secondaryBackgroundColor = "#e1f3f1"   # sidebar / tarjetas
+textColor = "#0b2e2e"                  # verde-azulado oscuro (texto)
+font = "sans serif"
+
+[ui]
+hideTopBar = false
