@@ -297,10 +297,35 @@ histórico) · `python verify_forecasts.py` (evalúa lo madurado) · `python bui
   existe utilizable: OLCI 300m falló en lagos someros, in-situ escaso) = limitación de la FUENTE, no
   del modelado. Otro resultado negativo legítimo (como DYNAMICS/SEASONAL). Scripts conservados.
 
+## DESPLIEGUE — INTERFAZ STREAMLIT (2026-06-26) — HECHO
+- **`app.py`** (Streamlit): demo desplegable y HONESTA que **envuelve** la lógica existente (no
+  implementa modelado). Flujo: selector de cuerpo (5 validados, con grupo y país) → horizonte
+  (1/3/5/7 d) → escena Sentinel-2 en 2 modos (*escena de ejemplo* de `imagenes/` por fecha, o
+  *subir GeoTIFF* de 5 bandas con validación y rechazo claro si no lo es) → **Analizar**. Muestra:
+  (1) imagen satelital real, (2) mapa de biomasa prevista a +h d (estilo `make_maps`), (3) bandera
+  de alerta calibrada + % de área en riesgo, (4) banda de incertidumbre P10–P90, (5) disclaimer fijo
+  (proxy de biomasa, NO toxicidad). Etiqueta **EXPLORATORIO** para Cajón; etiqueta de **confianza**
+  vía `guards`. Barra lateral con las reglas de honestidad (no fotos de celular: requiere B5/B8;
+  solo 5 cuerpos; es pronóstico, no detección).
+- **Reutilización sin duplicar lógica** (refactors aditivos, comportamiento por defecto intacto):
+  - `make_maps.py`: se extrajo **`build_map_figure(wb, h, path, t0, res=None)`** (devuelve la figura
+    de 2 paneles + stats; acepta path explícito y recursos precargados). `make_map` (CLI) ahora la
+    llama y guarda el PNG.
+  - `predict.forecast_body(wb, t0, spec_override=None, res=None)`: `spec_override` permite usar el
+    espectral de una escena SUBIDA; `res` permite modelos precargados (cache). Sin cambios cuando
+    ambos son None.
+  - `app.py` cachea los modelos con **`st.cache_resource`** (`load_resources`: 8 bundles + 8 NN +
+    calibradores + thr_body) para no recargar en cada interacción.
+- **Verificado:** `app.py` importa sin fallos; `streamlit run app.py` levanta el server sin errores;
+  la ruta de análisis corre end-to-end con escena de ejemplo (mapa + pronóstico consistentes) y con
+  escena subida (`spec_override`); archivos inválidos se rechazan con mensaje claro (no traceback).
+  `check_integrity` **14/14** y los 16 tests pasan (modelado intacto). `README_APP.md` explica cómo
+  correrla (LOCAL para la defensa); `streamlit` añadido a `requirements.txt`.
+
 ## QUÉ SIGUE (pendiente)
 Modelos en estado de defensa. Quedan, cuando el usuario lo indique (EN PAUSA): notebook limpio y
 redacción de tesis. (Figuras de validación + mapas + capa operativa + OLCI costa + validación de
-campo + experimento zonificación: HECHOS.)
+campo + experimento zonificación + interfaz Streamlit: HECHOS.)
 
 ## EN PAUSA (no hacer hasta que el usuario lo pida)
 Figuras, notebook limpio que reemplace los viejos, redacción de tesis.
@@ -335,7 +360,10 @@ Figuras, notebook limpio que reemplace los viejos, redacción de tesis.
   con fuga; lo genera `build_notebook.py` y se ejecuta con nbconvert (20 celdas, 0 errores).
 - `era5_sensitivity.py` — **sensibilidad ERA5 reanálisis vs pronóstico** (ablación + ruido #5).
 - `train_final.py` / `predict.py` / `calibrate_alert.py` / `make_maps.py` — sistema desplegable.
-  `predict.py` expone `forecast_body(wb,t0)` (inferencia estructurada reutilizable).
+  `predict.py` expone `forecast_body(wb,t0,spec_override,res)` (inferencia estructurada reutilizable);
+  `make_maps.py` expone `build_map_figure(wb,h,path,t0,res)` (figura de mapa reutilizable).
+- `app.py` — **interfaz Streamlit** (demo desplegable); envuelve `build_map_figure` + `forecast_body`
+  + `guards`. Correr: `streamlit run app.py` (ver `README_APP.md`).
 - `build_validation_figs.py` — figuras de validación (skill, intervalos, serie temporal, dispersión).
 - `compute_metrics.py` — RMSE y R² (test intacto, log y µg/L) → `rmse_r2_metrics.csv`.
 - `validate_insitu_model.py` — validación del modelo vs verdad de campo in-situ (ancla r=0.67) → `fig_insitu_*`.

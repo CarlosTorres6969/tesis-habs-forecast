@@ -96,11 +96,16 @@ def build_features(wb, t0):
     return pd.DataFrame([row]), float(chl0), t0
 
 
-def forecast_body(wb, t0=None):
+def forecast_body(wb, t0=None, spec_override=None, res=None):
     """Pronostico ESTRUCTURADO 0-7 d para un cuerpo (sin imprimir). Fuente unica de verdad
     de la inferencia: la reusa tanto predict_body (CLI) como run_forecast (bucle operativo).
     Causal: solo datos <= t0 (build_features). Devuelve un dict con metadatos + lista por
-    horizonte (chl_pred, p10, p90, prob_riesgo, riesgo), o None si faltan datos."""
+    horizonte (chl_pred, p10, p90, prob_riesgo, riesgo), o None si faltan datos.
+
+    spec_override (opcional): dict {banda/indice espectral: valor} con la mediana espectral de
+    una escena EXTERNA (p.ej. un GeoTIFF subido en la app). Si se pasa, reemplaza las columnas
+    espectrales del vector de features; el contexto NO espectral (autorreg/ERA5/in-situ) sigue
+    siendo el del cuerpo en t0. No altera el comportamiento por defecto (spec_override=None)."""
     group = GROUP[wb]
     sc = _load(SCENE, wb).sort_values("fecha")
     if sc.empty:
@@ -114,18 +119,31 @@ def forecast_body(wb, t0=None):
     if built is None:
         return None
     X, chl0, t0 = built
-    thr_body = joblib.load(os.path.join(MODELS, "thr_body.pkl")).get(wb, 10.0)
-    # calibrador + umbral operativo de alerta (calibrate_alert.py)
-    calib_f = os.path.join(MODELS, f"alert_calib_{group}.pkl")
-    calib = joblib.load(calib_f) if os.path.exists(calib_f) else None
+    if spec_override:                          # escena externa: usa SU espectral (app: GeoTIFF subido)
+        for f, v in spec_override.items():
+            if f in X.columns:
+                X[f] = v
+    # recursos: precargados (res, p.ej. cache de Streamlit) o leidos de disco (comportamiento normal)
+    thr_map = res["thr_body"] if res else joblib.load(os.path.join(MODELS, "thr_body.pkl"))
+    thr_body = thr_map.get(wb, 10.0)
+    if res:
+        calib = res["calib"].get(group)
+    else:
+        calib_f = os.path.join(MODELS, f"alert_calib_{group}.pkl")
+        calib = joblib.load(calib_f) if os.path.exists(calib_f) else None
     pthr = calib["threshold"] if calib is not None else 0.5
 
     horizons = []
     for h in [1, 3, 5, 7]:
-        f = os.path.join(MODELS, f"{group}_h{h}.pkl")
-        if not os.path.exists(f):
-            continue
-        b = joblib.load(f)
+        if res:
+            b = res["bundles"].get((group, h))
+            if b is None:
+                continue
+        else:
+            f = os.path.join(MODELS, f"{group}_h{h}.pkl")
+            if not os.path.exists(f):
+                continue
+            b = joblib.load(f)
         feats = b["feats"]
         Xh = X.reindex(columns=feats)              # asegura columnas/orden del modelo
         chl = float(np.expm1(b["reg"].predict(Xh)[0]))
@@ -141,8 +159,11 @@ def forecast_body(wb, t0=None):
         if b["clf"] is not None:
             probs.append(float(b["clf"].predict_proba(Xh)[0, 1]))
         Xs = b["sc"].transform(b["imp"].transform(Xh))
-        net = HABNet(b["n_in"]); net.load_state_dict(torch.load(os.path.join(MODELS, f"{group}_h{h}_nn.pt")))
-        net.eval()
+        if res:
+            net = res["nn"][(group, h)]
+        else:
+            net = HABNet(b["n_in"]); net.load_state_dict(torch.load(os.path.join(MODELS, f"{group}_h{h}_nn.pt")))
+            net.eval()
         with torch.no_grad():
             _, logit = net(torch.tensor(Xs, dtype=torch.float32))
             probs.append(float(torch.sigmoid(logit)[0]))

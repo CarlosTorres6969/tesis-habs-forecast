@@ -9,6 +9,7 @@ scipy==1.17.1
 matplotlib==3.10.8
 joblib==1.5.3
 pytest>=8.0          # tests de la capa operativa (guards, esquema de pronostico, verificacion)
+streamlit>=1.30      # interfaz de demostracion (app.py); se corre LOCAL para la defensa
 
 # Geoespacial / ingesta de datos (solo para re-descargar y re-procesar desde crudo):
 rasterio==1.5.0

@@ -109,34 +109,29 @@ def _best_scene(tifs):
     return best
 
 
-def make_map(wb, h=7, scene=None):
+def build_map_figure(wb, h, path, t0, res=None):
+    """Construye la figura de 2 paneles (1: satelital real; 2: biomasa algal prevista a +h d)
+    para una escena Sentinel-2 dada. REUTILIZADA por make_map (CLI -> PNG) y por app.py
+    (Streamlit -> st.pyplot); NO guarda ni cierra la figura (decide el llamador).
+      path : raster Sentinel-2 de 5 bandas (B2,B3,B4,B5,B8).
+      t0   : fecha de contexto para las features NO espectrales (broadcast); puede ser None.
+      res  : recursos precargados (cache de Streamlit) opcionales; si None, lee de disco.
+    Devuelve (fig, stats). Lanza ValueError con mensaje claro si la escena no sirve."""
     group = GROUP[wb]
-    folder = KEY2FOLDER[wb]
-    tifs = sorted(glob.glob(os.path.join(C.DIR_IMAGENES, folder, "**", "*.tif"), recursive=True))
-    if not tifs:
-        print(f"{wb}: sin rasters."); return
-    if scene:                                        # fecha concreta pedida (YYYY-MM-DD)
-        match = [p for p in tifs if scene in os.path.basename(p)]
-        path = match[-1] if match else _best_scene(tifs)
-    else:
-        path = _best_scene(tifs)                     # MEJOR escena (cobertura de agua limpia)
     sp = _scene_pixels(path)
     if sp is None:
-        print(f"{wb}: escena invalida."); return
+        raise ValueError("La escena no tiene 5 bandas validas (se requieren B2,B3,B4,B5,B8).")
     feats2d, water = sp
     H, W = water.shape
     nwater = int(water.sum())
     if nwater < 50:
-        print(f"{wb}: pocos pixeles de agua."); return
+        raise ValueError("La escena tiene muy pocos pixeles de agua validos para analizar.")
 
     # features no-espectrales del cuerpo en t0 (broadcast a todos los pixeles)
-    import re
-    m = re.search(r"(\d{4}-\d{2}-\d{2})", os.path.basename(path))
-    t0 = pd.Timestamp(m.group(1)) if m else None
-    built = build_features(wb, t0)
+    built = build_features(wb, t0) if t0 is not None else None
     body_row = built[0].iloc[0] if built is not None else pd.Series(dtype=float)
 
-    bundle = joblib.load(os.path.join(MODELS, f"{group}_h{h}.pkl"))
+    bundle = res["bundles"][(group, h)] if res else joblib.load(os.path.join(MODELS, f"{group}_h{h}.pkl"))
     feats = bundle["feats"]
     # matriz pixel x feature
     X = pd.DataFrame(index=np.arange(nwater), columns=feats, dtype="float32")
@@ -153,9 +148,7 @@ def make_map(wb, h=7, scene=None):
     grid = np.full((H, W), np.nan, dtype="float32")
     grid[water] = chl
 
-    thr = joblib.load(os.path.join(MODELS, "thr_body.pkl")).get(wb, 10.0)
-    os.makedirs(REPORTS, exist_ok=True)
-    out = os.path.join(REPORTS, f"mapa_{wb}_h{h}.png")
+    thr = (res["thr_body"] if res else joblib.load(os.path.join(MODELS, "thr_body.pkl"))).get(wb, 10.0)
 
     # --- fondo satelital color verdadero (RGB = B4,B3,B2) con realce por percentiles ---
     rgb = np.dstack([feats2d["B4"], feats2d["B3"], feats2d["B2"]]).astype("float32")
@@ -221,9 +214,35 @@ def make_map(wb, h=7, scene=None):
                  f"clorofila-a media = {chlmean:.1f} ug/L   ·   area en riesgo = {pct_alert:.0f}%   "
                  f"(herramienta de alerta; NO confirma toxicidad, requiere verificacion de campo)",
                  fontsize=12)
-    plt.tight_layout(rect=(0, 0, 1, 0.92)); plt.savefig(out, dpi=130, bbox_inches="tight"); plt.close()
-    print(f"  {wb} +{h}d -> {out} | chl-a media={chlmean:.1f} ug/L "
-          f"| area de riesgo/biomasa alta={pct_alert:.0f}%")
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
+    stats = {"chl_mean": float(chlmean), "pct_alert": float(pct_alert), "thr": float(thr),
+             "t0": t0, "n_water_px": int(nwater), "h": int(h), "group": group}
+    return fig, stats
+
+
+def make_map(wb, h=7, scene=None):
+    """CLI: elige la escena (mejor o por fecha), construye la figura y la guarda como PNG."""
+    folder = KEY2FOLDER[wb]
+    tifs = sorted(glob.glob(os.path.join(C.DIR_IMAGENES, folder, "**", "*.tif"), recursive=True))
+    if not tifs:
+        print(f"{wb}: sin rasters."); return
+    if scene:                                        # fecha concreta pedida (YYYY-MM-DD)
+        match = [p for p in tifs if scene in os.path.basename(p)]
+        path = match[-1] if match else _best_scene(tifs)
+    else:
+        path = _best_scene(tifs)                     # MEJOR escena (cobertura de agua limpia)
+    import re
+    m = re.search(r"(\d{4}-\d{2}-\d{2})", os.path.basename(path))
+    t0 = pd.Timestamp(m.group(1)) if m else None
+    try:
+        fig, stats = build_map_figure(wb, h, path, t0)
+    except ValueError as e:
+        print(f"{wb}: {e}"); return
+    os.makedirs(REPORTS, exist_ok=True)
+    out = os.path.join(REPORTS, f"mapa_{wb}_h{h}.png")
+    fig.savefig(out, dpi=130, bbox_inches="tight"); plt.close(fig)
+    print(f"  {wb} +{h}d -> {out} | chl-a media={stats['chl_mean']:.1f} ug/L "
+          f"| area de riesgo/biomasa alta={stats['pct_alert']:.0f}%")
 
 
 def main():
