@@ -133,6 +133,9 @@ def build_map_figure(wb, h, path, t0, res=None):
 
     bundle = res["bundles"][(group, h)] if res else joblib.load(os.path.join(MODELS, f"{group}_h{h}.pkl"))
     feats = bundle["feats"]
+    # h1/h7 no seleccionan bandas por pixel -> la prediccion es constante en toda el agua
+    # (mapa uniforme por diseño); solo h3/h5 usan senal espectral -> gradiente espacial.
+    has_spatial = any(f in SPEC for f in feats)
     # matriz pixel x feature
     X = pd.DataFrame(index=np.arange(nwater), columns=feats, dtype="float32")
     for f in feats:
@@ -203,8 +206,9 @@ def build_map_figure(wb, h, path, t0, res=None):
         ax[1].contour(riskf, levels=[0.5], colors="red", linewidths=1.6)
     cb = fig.colorbar(im, ax=ax[1], fraction=0.046, pad=0.04)
     cb.set_label("Clorofila-a prevista (ug/L) — biomasa algal", fontsize=9)
-    ax[1].set_title(f"2) Donde se espera mas biomasa algal (a +{h} dias)\n"
-                    f"tierra = gris  ·  agua = color (azul bajo -> rojo alto)", fontsize=11)
+    sub = ("tierra = gris  ·  agua = color (azul bajo -> rojo alto)" if has_spatial
+           else "tierra = gris  ·  agua uniforme (horizonte body-level: sin detalle por pixel)")
+    ax[1].set_title(f"2) Donde se espera mas biomasa algal (a +{h} dias)\n{sub}", fontsize=11)
     leg = [Patch(facecolor="0.6", label="Tierra (gris, fuera del analisis)"),
            Patch(facecolor="#2b3ff5", label="Agua: biomasa BAJA"),
            Patch(facecolor="#d62718", label="Agua: biomasa ALTA (posible floracion)"),
@@ -218,7 +222,8 @@ def build_map_figure(wb, h, path, t0, res=None):
                  fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.92))
     stats = {"chl_mean": float(chlmean), "pct_alert": float(pct_alert), "thr": float(thr),
-             "t0": t0, "n_water_px": int(nwater), "h": int(h), "group": group}
+             "t0": t0, "n_water_px": int(nwater), "h": int(h), "group": group,
+             "has_spatial": bool(has_spatial)}
     return fig, stats
 
 
@@ -248,11 +253,11 @@ def make_map(wb, h=7, scene=None):
 
 
 def main():
-    # h=1 por defecto: a corto plazo el modelo usa la senal espectral por pixel -> mapa
-    # espacialmente informativo. A +7d el modelo es body-level (sin espectral) -> mapa plano.
+    # h=3 por defecto: h3/h5 seleccionan bandas por pixel -> mapa espacialmente informativo
+    # (gradiente). h1 y h7 son body-level (sin features espectrales) -> mapa uniforme.
     args = sys.argv[1:]
     wb = args[0] if args else "okeechobee"
-    h = int(args[1]) if len(args) > 1 and args[1].isdigit() else 1
+    h = int(args[1]) if len(args) > 1 and args[1].isdigit() else 3
     # 3er argumento opcional: fecha de escena YYYY-MM-DD (si no, se elige la mejor)
     scene = next((a for a in args[1:] if "-" in a and len(a) == 10), None)
     make_map(wb, h, scene=scene)
