@@ -221,13 +221,19 @@ if st.button("🔍 Analizar", type="primary", disabled=disabled):
     # ELEMENTOS 3 y 4: alerta + banda de incertidumbre
     cA, cB = st.columns(2)
     with cA:
-        st.markdown("**Alerta de riesgo**")
-        if hh is not None and hh["riesgo"]:
-            st.error(f"🔴 RIESGO — probabilidad calibrada {hh['prob_riesgo']*100:.0f}%")
-        elif hh is not None:
-            st.success(f"🟢 SIN RIESGO — probabilidad calibrada {hh['prob_riesgo']*100:.0f}%")
-        st.caption(f"Area del cuerpo en zona de riesgo (>= {stats['thr']:.0f} µg/L): "
-                   f"**{stats['pct_alert']:.0f}%**  ·  dispara si prob ≥ {fc['alert_threshold']:.2f}")
+        st.markdown("**Nivel de biomasa algal**")
+        nivel = hh["nivel"] if hh is not None else None
+        if nivel == "floracion":
+            st.error(f"🔴 FLORACION — chl-a prevista {hh['chl_pred']:.1f} µg/L (≥ {fc['thr_floracion']:.0f})")
+        elif nivel == "elevada":
+            st.warning(f"🟡 BIOMASA ELEVADA — chl-a prevista {hh['chl_pred']:.1f} µg/L "
+                       f"(≥ {C.THRESHOLDS['moderate']:.0f})")
+        elif nivel is not None:
+            st.success(f"🟢 NORMAL — chl-a prevista {hh['chl_pred']:.1f} µg/L "
+                       f"(< {C.THRESHOLDS['moderate']:.0f})")
+        st.caption(f"Area en floracion (≥ {stats['thr']:.0f} µg/L): **{stats['pct_alert']:.0f}%**  ·  "
+                   f"biomasa elevada (≥ {stats['thr_elev']:.0f}): **{stats['pct_elev']:.0f}%**  ·  "
+                   f"prob. anomalia (P85): {hh['prob_riesgo']*100:.0f}%")
     with cB:
         st.markdown("**Clorofila-a prevista (intensidad)**")
         if hh is not None:

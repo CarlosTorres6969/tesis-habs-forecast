@@ -203,7 +203,9 @@ def build_map_figure(wb, h, path, t0, res=None):
     grid = np.full((H, W), np.nan, dtype="float32")
     grid[water] = chl
 
-    thr = (res["thr_body"] if res else joblib.load(os.path.join(MODELS, "thr_body.pkl"))).get(wb, 10.0)
+    thr_rel = (res["thr_body"] if res else joblib.load(os.path.join(MODELS, "thr_body.pkl"))).get(wb, 10.0)
+    thr = C.alert_threshold_ugl(thr_rel)               # FLORACION: p85 acotado al nivel biologico (<=24)
+    thr_elev = float(C.THRESHOLDS["moderate"])         # BIOMASA ELEVADA: >=10 ug/L
 
     # --- fondo satelital color verdadero (RGB = B4,B3,B2) con realce por percentiles ---
     rgb = np.dstack([feats2d["B4"], feats2d["B3"], feats2d["B2"]]).astype("float32")
@@ -237,10 +239,14 @@ def build_map_figure(wb, h, path, t0, res=None):
     vmax = float(np.nanpercentile(grid, 98))
     if not (vmax > vmin):                                   # escena casi plana: evita escala degenerada
         vmax = vmin + 1.0
-    pct_alert = float(np.nanmean(grid >= thr) * 100)
+    wv = grid[np.isfinite(grid)]                            # valores SOLO en agua (denominador correcto)
+    pct_alert = float((wv >= thr).mean() * 100) if wv.size else 0.0       # % AGUA en FLORACION (>= thr)
+    pct_elev  = float((wv >= thr_elev).mean() * 100) if wv.size else 0.0  # % AGUA con biomasa elevada (>=10)
     chlmean = float(np.nanmean(grid))
+    nivel_body = C.biomass_level(chlmean, thr)             # nivel global del cuerpo (segun la media)
     waterf = water.astype("float32")
     riskf = np.where(np.isfinite(grid) & (grid >= thr), 1.0, 0.0)
+    elevf = np.where(np.isfinite(grid) & (grid >= thr_elev), 1.0, 0.0)
     # tierra en GRIS (luminancia) para separar claramente agua (color) de terreno
     gray = 0.299 * rgbn[:, :, 0] + 0.587 * rgbn[:, :, 1] + 0.114 * rgbn[:, :, 2]
     base_gray = np.dstack([gray, gray, gray])
@@ -254,6 +260,9 @@ def build_map_figure(wb, h, path, t0, res=None):
     # Panel 2: tierra en gris, agua coloreada por biomasa, contorno rojo = zona de riesgo
     ax[1].imshow(base_gray)
     im = ax[1].imshow(chl_ma, cmap="turbo", vmin=vmin, vmax=vmax)
+    # dos niveles biologicos: contorno naranja = biomasa elevada (>=10); rojo = floracion (>= thr)
+    if elevf.sum() > 0:
+        ax[1].contour(elevf, levels=[0.5], colors="#ff9800", linewidths=1.0, linestyles="--")
     if riskf.sum() > 0:
         ax[1].contour(riskf, levels=[0.5], colors="red", linewidths=1.6)
     cb = fig.colorbar(im, ax=ax[1], fraction=0.046, pad=0.04)
@@ -264,19 +273,23 @@ def build_map_figure(wb, h, path, t0, res=None):
     ax[1].set_title(f"2) Donde se espera mas biomasa algal (a +{h} dias)\n{sub}", fontsize=11)
     leg = [Patch(facecolor="0.6", label="Tierra (gris, fuera del analisis)"),
            Patch(facecolor="#2b3ff5", label="Agua: biomasa BAJA"),
-           Patch(facecolor="#d62718", label="Agua: biomasa ALTA (posible floracion)"),
-           Line2D([0], [0], color="red", lw=2, label=f"Zona de RIESGO (>= {thr:.0f} ug/L)")]
+           Patch(facecolor="#d62718", label="Agua: biomasa ALTA"),
+           Line2D([0], [0], color="#ff9800", lw=2, ls="--", label=f"Biomasa ELEVADA (>= {thr_elev:.0f} ug/L)"),
+           Line2D([0], [0], color="red", lw=2, label=f"FLORACION (>= {thr:.0f} ug/L)")]
     ax[1].legend(handles=leg, loc="lower left", fontsize=8, framealpha=0.92)
     for a in ax:
         a.set_xticks([]); a.set_yticks([])
-    fig.suptitle(f"{wb.upper()} ({'lago' if group=='freshwater' else 'costa'}) — pronostico de riesgo de "
+    fig.suptitle(f"{wb.upper()} ({'lago' if group=='freshwater' else 'costa'}) — pronostico de "
                  f"biomasa algal a +{h} dias  |  escena {t0.date() if t0 is not None else '?'}\n"
-                 f"clorofila-a media = {chlmean:.1f} ug/L   ·   area en riesgo = {pct_alert:.0f}%",
+                 f"clorofila-a media = {chlmean:.1f} ug/L ({C.LEVEL_ES[nivel_body]})   ·   "
+                 f"area en floracion (>= {thr:.0f}) = {pct_alert:.0f}%   ·   "
+                 f"biomasa elevada (>= {thr_elev:.0f}) = {pct_elev:.0f}%",
                  fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.92))
-    stats = {"chl_mean": float(chlmean), "pct_alert": float(pct_alert), "thr": float(thr),
-             "t0": t0, "n_water_px": int(nwater), "h": int(h), "group": group,
-             "has_spatial": bool(has_spatial), "spatial_mode": spatial_mode}
+    stats = {"chl_mean": float(chlmean), "pct_alert": float(pct_alert),
+             "pct_elev": float(pct_elev), "thr": float(thr), "thr_elev": float(thr_elev),
+             "nivel": nivel_body, "t0": t0, "n_water_px": int(nwater), "h": int(h),
+             "group": group, "has_spatial": bool(has_spatial), "spatial_mode": spatial_mode}
     return fig, stats
 
 

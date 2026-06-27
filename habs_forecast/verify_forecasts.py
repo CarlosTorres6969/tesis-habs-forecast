@@ -64,7 +64,7 @@ def verify(log_df, target_df, thr_body):
         fecha_real, chl_real = _match_real(tgt_by_body[wb], r["t0"], h)
         if chl_real is None:
             continue                                  # aun no madura -> no verificable
-        thr = float(thr_body.get(wb, C.THRESHOLDS["moderate"]))
+        thr = C.alert_threshold_ugl(thr_body.get(wb, C.THRESHOLDS["moderate"]))  # mismo umbral que la alerta
         p10, p90 = r.get("p10"), r.get("p90")
         in_band = (pd.notna(p10) and pd.notna(p90) and float(p10) <= chl_real <= float(p90))
         event_real = bool(chl_real >= thr)

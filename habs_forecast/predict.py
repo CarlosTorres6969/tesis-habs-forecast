@@ -126,6 +126,7 @@ def forecast_body(wb, t0=None, spec_override=None, res=None):
     # recursos: precargados (res, p.ej. cache de Streamlit) o leidos de disco (comportamiento normal)
     thr_map = res["thr_body"] if res else joblib.load(os.path.join(MODELS, "thr_body.pkl"))
     thr_body = thr_map.get(wb, 10.0)
+    thr_floracion = C.alert_threshold_ugl(thr_body)   # p85 acotado al nivel biologico (<=24 ug/L)
     if res:
         calib = res["calib"].get(group)
     else:
@@ -170,10 +171,17 @@ def forecast_body(wb, t0=None, spec_override=None, res=None):
         p = float(np.mean(probs))
         if calib is not None:                       # calibrar a probabilidad operativa
             p = float(calib["iso"].predict([p])[0])
+        # RIESGO por BIOMASA prevista (consistente con el mapa y con lo que se ve): la clorofila
+        # pronosticada vs el umbral biologico del cuerpo. prob_riesgo (clasificador calibrado) se
+        # conserva como evidencia auxiliar de anomalia.
+        nivel = C.biomass_level(chl, thr_floracion)
         horizons.append({"horizon": h, "chl_pred": chl, "p10": p10, "p90": p90,
-                         "prob_riesgo": p, "riesgo": bool(p >= pthr)})
+                         "prob_riesgo": p, "nivel": nivel,
+                         "riesgo": bool(nivel == "floracion"),
+                         "elevada": bool(nivel in ("elevada", "floracion"))})
     return {"water_body": wb, "group": group, "t0": t0, "chl0": float(chl0),
-            "thr_body": float(thr_body), "n_water_px": n_water_px,
+            "thr_body": float(thr_body), "thr_floracion": float(thr_floracion),
+            "n_water_px": n_water_px,
             "alert_threshold": float(pthr), "horizons": horizons}
 
 
@@ -185,14 +193,13 @@ def predict_body(wb, t0=None):
     confianza, flags, age = guards.evaluate_guards(wb, t0, fc["n_water_px"])
     nota_conf = f" | confianza={confianza}" + (f" ({', '.join(flags)})" if flags else "")
     print(f"\n=== {wb.upper()} ({fc['group']}) | t0={t0.date()} (hace {age}d) | "
-          f"chl-a actual={fc['chl0']:.1f} ug/L | biomasa alta (chl-a)>={fc['thr_body']:.1f} ug/L | "
-          f"dispara si prob>={fc['alert_threshold']:.2f}{nota_conf} ===")
-    print(f"  {'horizonte':10s} {'chl-a_pred(ug/L)':>16s} {'banda P10-P90':>16s} {'prob_riesgo':>12s} {'RIESGO':>8s}")
+          f"chl-a actual={fc['chl0']:.1f} ug/L | floracion (chl-a)>={fc['thr_floracion']:.1f} ug/L | "
+          f"biomasa elevada>={C.THRESHOLDS['moderate']:.0f} ug/L{nota_conf} ===")
+    print(f"  {'horizonte':10s} {'chl-a_pred(ug/L)':>16s} {'banda P10-P90':>16s} {'prob_anomalia':>13s} {'NIVEL':>16s}")
     for hh in fc["horizons"]:
         banda = f"{hh['p10']:.1f}-{hh['p90']:.1f}" if hh["p10"] is not None else ""
-        alerta = "SI" if hh["riesgo"] else "no"
         print(f"  +{hh['horizon']}d{'':6s} {hh['chl_pred']:>16.1f} {banda:>16s} "
-              f"{hh['prob_riesgo']:>12.2f} {alerta:>8s}")
+              f"{hh['prob_riesgo']:>13.2f} {C.LEVEL_ES[hh['nivel']]:>16s}")
     print("  Nota: RIESGO = biomasa algal elevada (clorofila-a anomala), NO confirma toxicidad; "
           "requiere verificacion de campo.")
     print("  Banda P10-P90 = intervalo de incertidumbre calibrado (CQR, cobertura ~80%).")
