@@ -167,14 +167,24 @@ def alert_threshold_ugl(thr_relative):
         return float(THRESHOLDS["severe"])
 
 
-def biomass_level(chl, thr_floracion):
+def elevated_threshold_ugl(thr_floracion):
+    """Umbral de 'biomasa elevada' (banda de aviso por DEBAJO de la floracion). Se define
+    relativo al umbral de floracion del cuerpo (60%), sin pasar del nivel eutrofico de 10 ug/L.
+    Garantiza el orden correcto SIEMPRE: elevada < floracion, tambien en cuerpos marinos/
+    oligotroficos donde el umbral de floracion (p85) ya es bajo (p.ej. 5.7 -> elevada 3.4)."""
+    return float(min(THRESHOLDS["moderate"], 0.6 * float(thr_floracion)))
+
+
+def biomass_level(chl, thr_floracion, thr_elevada=None):
     """Nivel de biomasa en 3 grados, consistente entre mapa, app y validacion:
-    'floracion' (>= umbral del cuerpo, max 24) · 'elevada' (>= 10) · 'normal' (< 10)."""
+    'floracion' (>= umbral del cuerpo) · 'elevada' (>= umbral de aviso) · 'normal'."""
     if chl is None:
         return None
+    if thr_elevada is None:
+        thr_elevada = elevated_threshold_ugl(thr_floracion)
     if chl >= thr_floracion:
         return "floracion"
-    if chl >= THRESHOLDS["moderate"]:
+    if chl >= thr_elevada:
         return "elevada"
     return "normal"
 

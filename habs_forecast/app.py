@@ -339,10 +339,10 @@ if st.button("🔍 Analizar", type="primary", disabled=disabled):
             st.error(f"🔴 FLORACION — chl-a prevista {hh['chl_pred']:.1f} µg/L (≥ {fc['thr_floracion']:.0f})")
         elif nivel == "elevada":
             st.warning(f"🟡 BIOMASA ELEVADA — chl-a prevista {hh['chl_pred']:.1f} µg/L "
-                       f"(≥ {C.THRESHOLDS['moderate']:.0f})")
+                       f"(≥ {fc['thr_elevada']:.0f})")
         elif nivel is not None:
             st.success(f"🟢 NORMAL — chl-a prevista {hh['chl_pred']:.1f} µg/L "
-                       f"(< {C.THRESHOLDS['moderate']:.0f})")
+                       f"(< {fc['thr_elevada']:.0f})")
         st.caption(f"Area en floracion (≥ {stats['thr']:.0f} µg/L): **{stats['pct_alert']:.0f}%**  ·  "
                    f"biomasa elevada (≥ {stats['thr_elev']:.0f}): **{stats['pct_elev']:.0f}%**  ·  "
                    f"prob. anomalia (P85): {hh['prob_riesgo']*100:.0f}%")
