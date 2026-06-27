@@ -266,9 +266,41 @@ histórico) · `python verify_forecasts.py` (evalúa lo madurado) · `python bui
 - **Reconciliado:** ESTADO + `REPORTE_DEFENSA.md` + `nested_metrics.json` + figuras coinciden con los
   números nuevos. `check_integrity` 14/14.
 
+## VALIDACIÓN DE CAMPO + RMSE/R² + EXPERIMENTO ZONIFICACIÓN (2026-06-26) — HECHO
+- **Validación contra verdad de campo in-situ** (`validate_insitu_model.py`): confronta la
+  predicción del modelo con chl-a in-situ real (gold standard). Solo Okeechobee tiene chl-a in-situ
+  2023–2026 (Honduras no; Yojoa solo Secchi ≤2022). RESULTADO en dos niveles:
+  - **ANCLA (fuerte y defendible):** el target satelital que el modelo pronostica vs in-situ
+    (agregado por fecha, ≤2 d) → **Pearson +0.67, Spearman +0.59** (12 fechas). Lo que el modelo
+    aprende a predecir SÍ sigue la realidad de campo. (Antes se reportó r=0.23 por mal emparejado.)
+  - **Validación DIRECTA pronóstico-vs-campo: limitada por datos** — Okeechobee tiene solo **24
+    fechas in-situ únicas** (108 medidas clusterizadas), ~5–9 alinean con escenas por horizonte.
+    El modelo bate a persistencia en MAE a +3d/+7d (skill_campo +0.34/+0.47) pero las correlaciones
+    bailan (−0.6 a +0.62) por n pequeño + heterogeneidad espacial (20 µg/L de rango intra-día,
+    punto vs agregado). Se declara como limitación (no se esconde). Figuras: `fig_insitu_*.png`.
+- **RMSE y R² crudos** (`compute_metrics.py`, sobre test intacto, `rmse_r2_metrics.csv`):
+  GLOBAL RMSE **15.2 µg/L** / R² **0.15** (µg/L), R² **0.23** en log. Lagos +1d RMSE 15.3/R² 0.24;
+  costa RMSE ~3.4. **R² bajo es ESPERABLE y honesto** en pronóstico de clorofila a días (un R² alto
+  sería sospechoso de fuga). Métrica titular = SKILL vs persistencia (en log), no R². En µg/L a
+  horizontes medios el R² es negativo (los picos dominan el error cuadrático) → por eso se modela
+  en log. Costa: RMSE bajo pero R² negativo (poca varianza → el valor está en la ALERTA).
+- **EXPERIMENTO zonificación de Okeechobee — NO ADOPTADO** (`experiment_zonify_okeechobee.py`,
+  contenido en `artifacts/experiments/zonify/`): hipótesis = predecir un promedio de lago grande y
+  heterogéneo limita el skill; dividir en 4 cuadrantes (target VIIRS por sub-bbox + predictor
+  espectral re-agregado de los rasters por zona) debería ayudar. RESULTADO: **NO ayuda, empeora.**
+  Skill por zona (−0.00 a +0.13) < por cuerpo (+0.16 a +0.23); la prueba decisiva ZONAS→CUERPO
+  (re-agregar y comparar al mismo target del lago) da R² **−1.0 a −1.4** (mucho peor). CAUSA: a
+  VIIRS 750 m, partir en zonas deja cada una con menos píxeles → **target más ruidoso**; el promedio
+  del cuerpo entero reduce el ruido del satélite. **El cuello NO es la granularidad de agregación
+  sino la RESOLUCIÓN del target.** Hallazgo valioso: (1) justifica con evidencia el diseño a nivel
+  de cuerpo; (2) la palanca real para subir R² sería un target de chl-a de alta resolución (que no
+  existe utilizable: OLCI 300m falló en lagos someros, in-situ escaso) = limitación de la FUENTE, no
+  del modelado. Otro resultado negativo legítimo (como DYNAMICS/SEASONAL). Scripts conservados.
+
 ## QUÉ SIGUE (pendiente)
 Modelos en estado de defensa. Quedan, cuando el usuario lo indique (EN PAUSA): notebook limpio y
-redacción de tesis. (Figuras de validación + mapas + capa operativa + OLCI costa: HECHOS.)
+redacción de tesis. (Figuras de validación + mapas + capa operativa + OLCI costa + validación de
+campo + experimento zonificación: HECHOS.)
 
 ## EN PAUSA (no hacer hasta que el usuario lo pida)
 Figuras, notebook limpio que reemplace los viejos, redacción de tesis.
@@ -305,6 +337,10 @@ Figuras, notebook limpio que reemplace los viejos, redacción de tesis.
 - `train_final.py` / `predict.py` / `calibrate_alert.py` / `make_maps.py` — sistema desplegable.
   `predict.py` expone `forecast_body(wb,t0)` (inferencia estructurada reutilizable).
 - `build_validation_figs.py` — figuras de validación (skill, intervalos, serie temporal, dispersión).
+- `compute_metrics.py` — RMSE y R² (test intacto, log y µg/L) → `rmse_r2_metrics.csv`.
+- `validate_insitu_model.py` — validación del modelo vs verdad de campo in-situ (ancla r=0.67) → `fig_insitu_*`.
+- `experiment_zonify_okeechobee.py` — experimento (NO adoptado): zonificar Okeechobee; el cuello es
+  la resolución del target, no la agregación. Salida en `artifacts/experiments/zonify/`.
 - **Capa operativa de alerta** (2026-06-26):
   - `guards.py` — guardas de frescura/cobertura/estado → etiqueta de `confianza`.
   - `run_forecast.py` — bucle operativo (emite + bitácora `forecast_log.csv`); `--backfill K` siembra histórico.
