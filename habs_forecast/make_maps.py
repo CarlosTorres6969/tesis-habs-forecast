@@ -178,7 +178,10 @@ def build_map_figure(wb, h, path, t0, res=None):
     chl_ma = np.ma.masked_invalid(grid)                    # clorofila solo en agua
     # color anclado al p98 de la escena -> resalta la variacion espacial DENTRO del cuerpo
     # (el "donde hay mas biomasa"); el riesgo absoluto se marca con el contorno rojo (>= thr).
-    vmax = float(np.nanpercentile(grid, 98)) or 1.0
+    vmin = float(np.nanpercentile(grid, 2))
+    vmax = float(np.nanpercentile(grid, 98))
+    if not (vmax > vmin):                                   # escena casi plana: evita escala degenerada
+        vmax = vmin + 1.0
     pct_alert = float(np.nanmean(grid >= thr) * 100)
     chlmean = float(np.nanmean(grid))
     waterf = water.astype("float32")
@@ -195,7 +198,7 @@ def build_map_figure(wb, h, path, t0, res=None):
 
     # Panel 2: tierra en gris, agua coloreada por biomasa, contorno rojo = zona de riesgo
     ax[1].imshow(base_gray)
-    im = ax[1].imshow(chl_ma, cmap="turbo", vmin=0, vmax=vmax)
+    im = ax[1].imshow(chl_ma, cmap="turbo", vmin=vmin, vmax=vmax)
     if riskf.sum() > 0:
         ax[1].contour(riskf, levels=[0.5], colors="red", linewidths=1.6)
     cb = fig.colorbar(im, ax=ax[1], fraction=0.046, pad=0.04)
@@ -211,8 +214,7 @@ def build_map_figure(wb, h, path, t0, res=None):
         a.set_xticks([]); a.set_yticks([])
     fig.suptitle(f"{wb.upper()} ({'lago' if group=='freshwater' else 'costa'}) — pronostico de riesgo de "
                  f"biomasa algal a +{h} dias  |  escena {t0.date() if t0 is not None else '?'}\n"
-                 f"clorofila-a media = {chlmean:.1f} ug/L   ·   area en riesgo = {pct_alert:.0f}%   "
-                 f"(herramienta de alerta; NO confirma toxicidad, requiere verificacion de campo)",
+                 f"clorofila-a media = {chlmean:.1f} ug/L   ·   area en riesgo = {pct_alert:.0f}%",
                  fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.92))
     stats = {"chl_mean": float(chlmean), "pct_alert": float(pct_alert), "thr": float(thr),
