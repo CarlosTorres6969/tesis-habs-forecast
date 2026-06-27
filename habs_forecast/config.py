@@ -155,6 +155,33 @@ def chl_to_class(chl):
         return 1
     return 0
 
+
+def alert_threshold_ugl(thr_relative):
+    """Umbral OPERATIVO de floracion (ug/L) = el relativo del cuerpo (p85) ACOTADO por el
+    nivel biologico absoluto 'severe'. Asi un cuerpo hipereutrofico (Cajon p85=64, Yojoa,
+    Okeechobee) no exige niveles absurdos: una floracion real (>=24 ug/L) SIEMPRE dispara,
+    mientras que en agua oligotrofica se mantiene la sensibilidad relativa (p85 < 24)."""
+    try:
+        return float(min(float(thr_relative), THRESHOLDS["severe"]))
+    except (TypeError, ValueError):
+        return float(THRESHOLDS["severe"])
+
+
+def biomass_level(chl, thr_floracion):
+    """Nivel de biomasa en 3 grados, consistente entre mapa, app y validacion:
+    'floracion' (>= umbral del cuerpo, max 24) · 'elevada' (>= 10) · 'normal' (< 10)."""
+    if chl is None:
+        return None
+    if chl >= thr_floracion:
+        return "floracion"
+    if chl >= THRESHOLDS["moderate"]:
+        return "elevada"
+    return "normal"
+
+
+# etiquetas de presentacion (mapa / app)
+LEVEL_ES = {"floracion": "FLORACION", "elevada": "BIOMASA ELEVADA", "normal": "NORMAL"}
+
 # --------------------------------------------------------------------------------------
 # Validacion
 # --------------------------------------------------------------------------------------
