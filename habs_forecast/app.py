@@ -127,8 +127,9 @@ with c2:
     # h1 y h7 son body-level -> el mapa de biomasa sale uniforme (sin detalle espacial).
     h = st.selectbox("Horizonte de pronostico", [1, 3, 5, 7], index=1, format_func=lambda x: f"+{x} dias")
     if h in (1, 7):
-        st.caption("ℹ️ +1 y +7 dias son horizontes *body-level*: el mapa de biomasa sale "
-                   "uniforme (sin detalle espacial). Para ver el gradiente usa +3 o +5 dias.")
+        st.caption("ℹ️ +1 y +7 dias son horizontes *body-level*: el modelo predice el NIVEL "
+                   "del cuerpo, no por pixel. El mapa reparte ese nivel segun el patron "
+                   "espacial ACTUAL (estimacion), no es un pronostico pixel-a-pixel.")
 with c3:
     meta = KEY2META[wb]
     st.metric("Tipo", GRP_ES[meta["group"]].split(" / ")[0].capitalize())

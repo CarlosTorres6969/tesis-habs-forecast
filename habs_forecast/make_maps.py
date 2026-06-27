@@ -109,6 +109,32 @@ def _best_scene(tifs):
     return best
 
 
+def _spatial_pattern(group, feats2d, water, body_row, res):
+    """Patron espacial RELATIVO (media ~1) de clorofila a partir de la senal espectral
+    ACTUAL, usando un modelo que SI tiene features por pixel (h3; si no, h5). Sirve para
+    'desagregar' espacialmente un pronostico body-level (h1/h7), que de por si es uniforme:
+    el NIVEL lo pone el horizonte pedido y el DONDE lo pone la imagen de hoy. Devuelve un
+    vector por pixel de agua (media ~1) o None si no hay un modelo espectral disponible."""
+    n = int(water.sum())
+    for hp in (3, 5):
+        if res:
+            bundle = res["bundles"].get((group, hp))
+        else:
+            p = os.path.join(MODELS, f"{group}_h{hp}.pkl")
+            bundle = joblib.load(p) if os.path.exists(p) else None
+        if bundle is None or not any(f in SPEC for f in bundle["feats"]):
+            continue
+        feats = bundle["feats"]
+        X = pd.DataFrame(index=np.arange(n), columns=feats, dtype="float32")
+        for f in feats:
+            X[f] = feats2d[f][water].astype("float32") if f in SPEC else float(body_row.get(f, np.nan))
+        pat = np.clip(np.expm1(bundle["reg"].predict(X)), 0, None)
+        m = float(np.nanmean(pat))
+        if m > 0:
+            return (pat / m).astype("float32")
+    return None
+
+
 def build_map_figure(wb, h, path, t0, res=None):
     """Construye la figura de 2 paneles (1: satelital real; 2: biomasa algal prevista a +h d)
     para una escena Sentinel-2 dada. REUTILIZADA por make_map (CLI -> PNG) y por app.py
@@ -148,6 +174,15 @@ def build_map_figure(wb, h, path, t0, res=None):
     # con la senal espectral). Mapea la distribucion espacial del bloom.
     chl = np.expm1(bundle["reg"].predict(X))
     chl = np.clip(chl, 0, None)
+    # h1/h7 (body-level) dan chl constante -> desagregar espacialmente: nivel del horizonte
+    # x patron espacial ACTUAL (de un modelo espectral). El detalle es ESTIMADO, no pronostico
+    # pixel-a-pixel (se etiqueta en el subtitulo del panel 2).
+    spatial_mode = "model" if has_spatial else "uniform"
+    if not has_spatial:
+        pattern = _spatial_pattern(group, feats2d, water, body_row, res)
+        if pattern is not None:
+            chl = float(np.nanmean(chl)) * pattern
+            spatial_mode = "downscaled"
     grid = np.full((H, W), np.nan, dtype="float32")
     grid[water] = chl
 
@@ -206,8 +241,9 @@ def build_map_figure(wb, h, path, t0, res=None):
         ax[1].contour(riskf, levels=[0.5], colors="red", linewidths=1.6)
     cb = fig.colorbar(im, ax=ax[1], fraction=0.046, pad=0.04)
     cb.set_label("Clorofila-a prevista (ug/L) — biomasa algal", fontsize=9)
-    sub = ("tierra = gris  ·  agua = color (azul bajo -> rojo alto)" if has_spatial
-           else "tierra = gris  ·  agua uniforme (horizonte body-level: sin detalle por pixel)")
+    sub = {"model":      "tierra = gris  ·  agua = color (azul bajo -> rojo alto)",
+           "downscaled": f"tierra = gris  ·  patron espacial ESTIMADO de hoy, escalado al pronostico +{h}d",
+           "uniform":    "tierra = gris  ·  agua uniforme (horizonte body-level: sin detalle por pixel)"}[spatial_mode]
     ax[1].set_title(f"2) Donde se espera mas biomasa algal (a +{h} dias)\n{sub}", fontsize=11)
     leg = [Patch(facecolor="0.6", label="Tierra (gris, fuera del analisis)"),
            Patch(facecolor="#2b3ff5", label="Agua: biomasa BAJA"),
@@ -223,7 +259,7 @@ def build_map_figure(wb, h, path, t0, res=None):
     fig.tight_layout(rect=(0, 0, 1, 0.92))
     stats = {"chl_mean": float(chlmean), "pct_alert": float(pct_alert), "thr": float(thr),
              "t0": t0, "n_water_px": int(nwater), "h": int(h), "group": group,
-             "has_spatial": bool(has_spatial)}
+             "has_spatial": bool(has_spatial), "spatial_mode": spatial_mode}
     return fig, stats
 
 
