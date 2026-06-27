@@ -20,6 +20,7 @@ import pandas as pd
 import joblib
 import torch
 import streamlit as st
+import streamlit.components.v1 as components
 import config as C
 from predict import forecast_body, GROUP, SPEC, MODELS
 from make_maps import build_map_figure, _scene_pixels, KEY2FOLDER
@@ -45,35 +46,40 @@ DISCLAIMER = ("⚠️ **Proxy de biomasa algal (clorofila-a).** NO confirma toxi
 # --------------------------------------------------------------------------------------
 THEME_CSS = """
 <style>
-.block-container { padding-top: 1.1rem; padding-bottom: 2rem; max-width: 1200px; }
+.block-container { padding-top: 0.6rem; padding-bottom: 2.2rem; max-width: 1180px; }
 
-/* Encabezado hero con degradado oceanico animado */
-.hab-hero {
-  position: relative; border-radius: 18px; padding: 2.0rem 2.2rem 2.7rem; margin-bottom: 1.0rem;
-  overflow: hidden; color: #f7ffff;
-  background: linear-gradient(120deg,#062b3f 0%,#0a6b6b 42%,#1aa39a 72%,#46c39b 100%);
-  background-size: 220% 220%; animation: habflow 16s ease infinite;
-  box-shadow: 0 10px 30px rgba(6,43,63,.28);
-}
-@keyframes habflow { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
-.hab-hero h1 { margin:0; font-size:2.0rem; font-weight:800; text-shadow:0 2px 10px rgba(0,0,0,.25); }
-.hab-hero p { margin:.55rem 0 0; font-size:1.0rem; opacity:.96; max-width:64ch; }
-.hab-tags { margin-top:1rem; display:flex; gap:.5rem; flex-wrap:wrap; }
-.hab-tag { background:rgba(255,255,255,.16); border:1px solid rgba(255,255,255,.30);
-  padding:.28rem .7rem; border-radius:999px; font-size:.8rem; }
-.hab-wave { position:absolute; left:0; right:0; bottom:-1px; line-height:0; }
-.hab-wave svg { width:100%; height:44px; display:block; }
+/* perspectiva para que las tarjetas tengan profundidad 3D real */
+[data-testid="stHorizontalBlock"] { perspective: 1200px; }
 
-/* Botones con acento agua */
-.stButton > button { border-radius:10px; font-weight:700; border:0; color:#04302f;
-  background:linear-gradient(120deg,#0fa3a3,#46c39b); transition:transform .08s ease, box-shadow .15s ease; }
-.stButton > button:hover { transform:translateY(-1px); box-shadow:0 6px 16px rgba(15,163,163,.35); color:#04302f; }
+/* Botones con relieve y "pulsado" 3D */
+.stButton > button { border-radius:12px; font-weight:700; border:0; color:#04302f;
+  background:linear-gradient(120deg,#0fa3a3,#46c39b);
+  box-shadow:0 6px 0 #0a6b6b, 0 10px 18px rgba(6,43,63,.25);
+  transition:transform .1s ease, box-shadow .1s ease; }
+.stButton > button:hover { transform:translateY(-2px);
+  box-shadow:0 8px 0 #0a6b6b, 0 14px 24px rgba(15,163,163,.35); color:#04302f; }
+.stButton > button:active { transform:translateY(4px);
+  box-shadow:0 2px 0 #0a6b6b, 0 4px 10px rgba(6,43,63,.25); }
 
-/* Metricas como tarjeta */
-[data-testid="stMetric"] { background:#ffffff; border:1px solid #cfeae7; border-left:5px solid #0fa3a3;
-  border-radius:12px; padding:.8rem 1rem; box-shadow:0 2px 8px rgba(6,43,63,.06); }
-[data-testid="stAlert"] { border-radius:12px; }
-[data-testid="stVerticalBlockBorderWrapper"] { border-radius:14px; }
+/* Tarjetas (metricas): glass + inclinacion 3D al pasar el mouse */
+[data-testid="stMetric"] {
+  background:rgba(255,255,255,.72); backdrop-filter:blur(8px);
+  border:1px solid rgba(255,255,255,.6); border-left:5px solid #0fa3a3; border-radius:14px;
+  padding:.9rem 1.1rem; box-shadow:0 10px 24px rgba(6,43,63,.12);
+  transform-style:preserve-3d; transition:transform .25s ease, box-shadow .25s ease; }
+[data-testid="stMetric"]:hover { transform:translateY(-5px) rotateX(6deg) rotateY(-3deg);
+  box-shadow:0 22px 40px rgba(6,43,63,.22); }
+
+/* Alertas con glass y profundidad */
+[data-testid="stAlert"] { border-radius:14px; backdrop-filter:blur(6px);
+  box-shadow:0 10px 22px rgba(6,43,63,.10); transform-style:preserve-3d; transition:transform .2s ease; }
+[data-testid="stAlert"]:hover { transform:translateY(-3px) rotateX(4deg); }
+
+/* La figura/mapa como lamina flotante */
+[data-testid="stImage"], [data-testid="stPyplotChart"] {
+  border-radius:14px; box-shadow:0 16px 36px rgba(6,43,63,.18); overflow:hidden;
+  transition:transform .3s ease; }
+[data-testid="stImage"]:hover, [data-testid="stPyplotChart"]:hover { transform:translateY(-3px) scale(1.004); }
 
 /* Encabezados y sidebar */
 h2, h3 { color:#0a6b6b; }
@@ -83,23 +89,66 @@ section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2, sectio
 </style>
 """
 
-HERO_HTML = """
-<div class="hab-hero">
-  <h1>🌊 Alerta temprana de biomasa algal (HABs)</h1>
-  <p>Pronostico de riesgo de floraciones algales a <b>0–7 dias</b>. La clorofila-a se usa como
-     <b>proxy de biomasa</b>: la herramienta senala <b>riesgo</b>, no confirma toxicidad.</p>
-  <div class="hab-tags">
-    <span class="hab-tag">🛰️ Sentinel-2 (5 bandas)</span>
-    <span class="hab-tag">💧 5 cuerpos validados</span>
-    <span class="hab-tag">📈 Horizontes 0–7 dias</span>
-    <span class="hab-tag">🧪 XGBoost + Red neuronal</span>
-  </div>
-  <div class="hab-wave">
-    <svg viewBox="0 0 1440 60" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
-      <path fill="#f2fbfa" d="M0,32 C240,64 480,4 720,24 C960,46 1200,64 1440,26 L1440,60 L0,60 Z"></path>
-    </svg>
+# Encabezado 3D: animacion WebGL de agua (shader con iluminacion) embebida -> funciona OFFLINE.
+HERO_3D = """
+<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#f2fbfa;
+    font-family:"Segoe UI",system-ui,-apple-system,sans-serif;}
+  #wrap{position:relative;width:100%;height:240px;border-radius:18px;overflow:hidden;
+    background:linear-gradient(120deg,#062b3f,#0a6b6b,#1aa39a,#46c39b);
+    box-shadow:0 14px 34px rgba(6,43,63,.30);}
+  #gl{position:absolute;inset:0;width:100%;height:100%;display:block;}
+  #ov{position:absolute;inset:0;padding:26px 32px;color:#f7ffff;pointer-events:none;
+    display:flex;flex-direction:column;justify-content:center;text-shadow:0 2px 14px rgba(0,0,0,.45);}
+  #ov h1{margin:0;font-size:30px;font-weight:800;letter-spacing:.3px;}
+  #ov p{margin:9px 0 0;font-size:15px;max-width:64ch;opacity:.97;}
+  .tags{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;}
+  .tag{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.34);
+    padding:5px 11px;border-radius:999px;font-size:12px;}
+</style></head><body>
+<div id="wrap">
+  <canvas id="gl"></canvas>
+  <div id="ov">
+    <h1>🌊 Alerta temprana de biomasa algal (HABs)</h1>
+    <p>Pronostico de riesgo de floraciones algales a 0–7 dias. Clorofila-a como
+       <b>proxy de biomasa</b>: senala <b>riesgo</b>, no confirma toxicidad.</p>
+    <div class="tags">
+      <span class="tag">🛰️ Sentinel-2</span><span class="tag">💧 5 cuerpos validados</span>
+      <span class="tag">📈 Horizontes 0–7 dias</span><span class="tag">🧪 XGBoost + Red neuronal</span>
+    </div>
   </div>
 </div>
+<script>
+(function(){
+  var c=document.getElementById('gl');
+  var gl=c.getContext('webgl')||c.getContext('experimental-webgl');
+  if(!gl){return;}                         // sin WebGL -> queda el degradado CSS
+  function rs(){var d=window.devicePixelRatio||1;c.width=c.clientWidth*d;c.height=c.clientHeight*d;gl.viewport(0,0,c.width,c.height);}
+  window.addEventListener('resize',rs);rs();
+  var vs='attribute vec2 p;void main(){gl_Position=vec4(p,0.0,1.0);}';
+  var fs='precision highp float;uniform float u_t;uniform vec2 u_r;'+
+    'float wh(vec2 p,float t){float h=0.0;h+=sin(p.x*1.5+t)*0.5;h+=sin(p.y*1.7-t*1.1)*0.4;'+
+    'h+=sin((p.x+p.y)*1.1+t*0.7)*0.3;h+=sin(length(p-vec2(sin(t)*0.8,cos(t*0.7)*0.8))*3.0-t*2.0)*0.25;return h;}'+
+    'void main(){vec2 uv=gl_FragCoord.xy/u_r;vec2 p=(uv-0.5)*vec2(u_r.x/u_r.y,1.0)*6.0;'+
+    'float t=u_t*0.5;float e=0.06;float h=wh(p,t);float hx=wh(p+vec2(e,0.0),t)-h;float hy=wh(p+vec2(0.0,e),t)-h;'+
+    'vec3 n=normalize(vec3(-hx,-hy,e*4.0));vec3 L=normalize(vec3(0.4,0.6,0.7));'+
+    'float dif=clamp(dot(n,L),0.0,1.0);float sp=pow(clamp(dot(reflect(-L,n),vec3(0.0,0.0,1.0)),0.0,1.0),24.0);'+
+    'vec3 deep=vec3(0.02,0.17,0.27);vec3 teal=vec3(0.06,0.64,0.62);vec3 alg=vec3(0.27,0.78,0.55);'+
+    'vec3 col=mix(deep,teal,dif);col=mix(col,alg,smoothstep(0.6,1.0,dif)*0.55);col+=sp*0.6;'+
+    'gl_FragColor=vec4(col,1.0);}';
+  function sh(t,s){var o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);return o;}
+  var pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,vs));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,fs));
+  gl.linkProgram(pr);gl.useProgram(pr);
+  var buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+  var lp=gl.getAttribLocation(pr,'p');gl.enableVertexAttribArray(lp);gl.vertexAttribPointer(lp,2,gl.FLOAT,false,0,0);
+  var ut=gl.getUniformLocation(pr,'u_t'),ur=gl.getUniformLocation(pr,'u_r');
+  var t0=performance.now();
+  (function loop(){var t=(performance.now()-t0)/1000.0;gl.uniform1f(ut,t);gl.uniform2f(ur,c.width,c.height);
+    gl.drawArrays(gl.TRIANGLE_STRIP,0,4);requestAnimationFrame(loop);})();
+})();
+</script>
+</body></html>
 """
 
 
@@ -177,7 +226,7 @@ with st.sidebar:
     st.caption("Modelo: XGBoost (intensidad + intervalos CQR) + Red neuronal (alerta), por "
                "grupo ecologico y horizonte. Pronostico causal sin fuga (validacion anidada).")
 
-st.markdown(HERO_HTML, unsafe_allow_html=True)
+components.html(HERO_3D, height=250, scrolling=False)
 st.caption(DISCLAIMER)
 
 # --- Selectores ---
