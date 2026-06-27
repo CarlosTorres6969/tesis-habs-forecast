@@ -123,7 +123,12 @@ with c1:
     wb = st.selectbox("Cuerpo de agua", list(KEY2META.keys()),
                       format_func=lambda k: NICE.get(k, k))
 with c2:
-    h = st.selectbox("Horizonte de pronostico", [1, 3, 5, 7], format_func=lambda x: f"+{x} dias")
+    # +3 por defecto: h3/h5 usan senal espectral por pixel -> mapa con gradiente.
+    # h1 y h7 son body-level -> el mapa de biomasa sale uniforme (sin detalle espacial).
+    h = st.selectbox("Horizonte de pronostico", [1, 3, 5, 7], index=1, format_func=lambda x: f"+{x} dias")
+    if h in (1, 7):
+        st.caption("ℹ️ +1 y +7 dias son horizontes *body-level*: el mapa de biomasa sale "
+                   "uniforme (sin detalle espacial). Para ver el gradiente usa +3 o +5 dias.")
 with c3:
     meta = KEY2META[wb]
     st.metric("Tipo", GRP_ES[meta["group"]].split(" / ")[0].capitalize())
