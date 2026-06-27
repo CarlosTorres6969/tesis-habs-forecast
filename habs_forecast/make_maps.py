@@ -238,12 +238,14 @@ def build_map_figure(wb, h, path, t0, res=None):
     pct_elev  = float((wv >= thr_elev).mean() * 100) if wv.size else 0.0  # % AGUA con biomasa elevada
     chlmean = float(np.nanmean(grid))
     nivel_body = C.biomass_level(chlmean, thr, thr_elev)  # nivel global del cuerpo (segun la media)
-    # COLOR ABSOLUTO y comparable entre escenas: el umbral de floracion cae en el ROJO. Asi una
-    # escena de biomasa baja se ve azul/verde (NO roja), a diferencia de un realce relativo por
-    # percentiles —que siempre pinta de rojo el tope de la escena aunque el valor sea bajo—.
-    from matplotlib.colors import TwoSlopeNorm
-    vmax = max(float(thr) * 1.8, float(np.nanpercentile(grid, 99)) if wv.size else float(thr) * 1.8)
-    norm = TwoSlopeNorm(vmin=0.0, vcenter=float(thr), vmax=float(vmax))
+    # COLOR RELATIVO a la escena (p2-p98): resalta el GRADIENTE espacial de clorofila dentro
+    # del cuerpo (azul=menos -> rojo=mas), como las imagenes h3. La barra de color muestra los
+    # VALORES reales en ug/L (los mismos que se mapean en la pagina); el RIESGO absoluto se marca
+    # con los contornos (biomasa elevada / floracion) y con el % del titulo.
+    vmin = float(np.nanpercentile(grid, 2)) if wv.size else 0.0
+    vmax = float(np.nanpercentile(grid, 98)) if wv.size else 1.0
+    if not (vmax > vmin):                                   # escena casi plana: evita escala degenerada
+        vmax = vmin + 1.0
     waterf = water.astype("float32")
     riskf = np.where(np.isfinite(grid) & (grid >= thr), 1.0, 0.0)
     elevf = np.where(np.isfinite(grid) & (grid >= thr_elev), 1.0, 0.0)
@@ -259,7 +261,7 @@ def build_map_figure(wb, h, path, t0, res=None):
 
     # Panel 2: tierra en gris, agua coloreada por biomasa, contorno rojo = zona de riesgo
     ax[1].imshow(base_gray)
-    im = ax[1].imshow(chl_ma, cmap="turbo", norm=norm)
+    im = ax[1].imshow(chl_ma, cmap="turbo", vmin=vmin, vmax=vmax)
     # dos niveles biologicos: contorno naranja = biomasa elevada; rojo = floracion (>= thr)
     if elevf.sum() > 0:
         ax[1].contour(elevf, levels=[0.5], colors="#ff9800", linewidths=1.0, linestyles="--")
@@ -267,7 +269,7 @@ def build_map_figure(wb, h, path, t0, res=None):
         ax[1].contour(riskf, levels=[0.5], colors="red", linewidths=1.6)
     cb = fig.colorbar(im, ax=ax[1], fraction=0.046, pad=0.04)
     cb.set_label("Clorofila-a prevista (ug/L) — biomasa algal", fontsize=9)
-    sub = {"model":      "tierra = gris  ·  color = clorofila absoluta (azul bajo -> rojo floracion)",
+    sub = {"model":      "tierra = gris  ·  agua = gradiente de clorofila (azul menos -> rojo mas; valores en la barra)",
            "downscaled": f"tierra = gris  ·  patron espacial ESTIMADO de hoy, escalado al pronostico +{h}d",
            "uniform":    "tierra = gris  ·  agua uniforme (horizonte body-level: sin detalle por pixel)"}[spatial_mode]
     ax[1].set_title(f"2) Donde se espera mas biomasa algal (a +{h} dias)\n{sub}", fontsize=11)
