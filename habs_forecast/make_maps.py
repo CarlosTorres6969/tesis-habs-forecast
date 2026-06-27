@@ -47,9 +47,13 @@ def _strict_water(B2, B3, B4, B5, B8, eps=1e-10):
 
 
 def _clean_mask(water, min_frac=0.02, min_abs=20):
-    """Quita blobs dispersos: conserva componentes >= min_frac del mayor (y >= min_abs).
-    Para Cajon (embalse ramificado) esto mantiene los brazos grandes y borra el ruido."""
+    """Quita blobs dispersos y reconstruye el cuerpo continuo: 1) cierre morfologico para
+    unir los brazos finos del embalse separados por neblina/pixeles dudosos; 2) conserva
+    componentes >= min_frac del mayor (y >= min_abs); 3) rellena huecos internos.
+    Para Cajon (embalse ramificado) esto recupera el 'trayecto' del cuerpo de agua."""
     from scipy import ndimage
+    st = ndimage.generate_binary_structure(2, 2)   # 8-conectividad
+    water = ndimage.binary_closing(water, structure=st, iterations=2)
     lab, n = ndimage.label(water)
     if n == 0:
         return water
@@ -57,7 +61,8 @@ def _clean_mask(water, min_frac=0.02, min_abs=20):
     sizes[0] = 0                                   # fondo
     thr = max(min_abs, int(min_frac * sizes.max()))
     keep = np.where(sizes >= thr)[0]
-    return np.isin(lab, keep)
+    mask = np.isin(lab, keep)
+    return ndimage.binary_fill_holes(mask)         # cobertura continua del cuerpo
 
 
 def _scene_pixels(path):
@@ -78,10 +83,11 @@ def _scene_pixels(path):
 
 
 def _clear_water_score(path, D=12):
-    """Puntua una escena por COBERTURA de agua LIMPIA (lectura decimada, rapida).
-    Penaliza escenas recortadas (pocos pixeles validos) y nubes (agua brillante).
-    Devuelve el nº de pixeles de agua oscura/limpia escalado a resolucion nativa,
-    de modo que a igual area fisica gana la de mayor resolucion (S2 > Landsat)."""
+    """Puntua una escena por el CUERPO DE AGUA COHERENTE mas grande (lectura decimada).
+    Usa el COMPONENTE CONEXO mayor (no el total de pixeles dispersos): asi una escena con
+    neblina —que fragmenta el agua en parches— pierde frente a una despejada donde el
+    embalse forma un solo cuerpo continuo. Escala a resolucion nativa, de modo que a igual
+    cuerpo fisico gana la de mayor resolucion (S2 > Landsat)."""
     try:
         with rasterio.open(path) as ds:
             h0, w0 = ds.height, ds.width
@@ -94,9 +100,20 @@ def _clear_water_score(path, D=12):
     B2, B3, B4, B5, B8 = arr[0], arr[1], arr[2], arr[3], arr[4]
     if np.nanmax(arr) > C.BAND_SCALE_THRESHOLD:
         B2, B3, B4, B5, B8 = (b / 10000.0 for b in (B2, B3, B4, B5, B8))
-    clear = _clean_mask(_strict_water(B2, B3, B4, B5, B8), min_abs=3)  # agua limpia, sin ruido
+    from scipy import ndimage
+    clear = _strict_water(B2, B3, B4, B5, B8)
+    clear = ndimage.binary_closing(clear, structure=ndimage.generate_binary_structure(2, 2))
+    lab, n = ndimage.label(clear)
+    if n == 0:
+        return 0.0
+    sizes = np.bincount(lab.ravel()); sizes[0] = 0
+    big, tot = float(sizes.max()), float(sizes.sum())
+    coh = big / tot if tot else 0.0              # coherencia: que el agua forme UN cuerpo, no parches
     scale = (h0 * w0) / float(oh * ow)           # a "pixeles full equivalentes"
-    return float(clear.sum()) * scale
+    score = big * scale
+    if coh < 0.40:                               # agua dispersa (neblina/nubes): penaliza fuerte
+        score *= 0.05
+    return score
 
 
 def _best_scene(tifs):
