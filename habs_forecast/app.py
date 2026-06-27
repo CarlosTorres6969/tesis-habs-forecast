@@ -40,6 +40,68 @@ DISCLAIMER = ("⚠️ **Proxy de biomasa algal (clorofila-a).** NO confirma toxi
               "nociva. Herramienta de **alerta temprana**; requiere **verificacion de campo** "
               "(identificacion de cianobacterias, toxinas).")
 
+# --------------------------------------------------------------------------------------
+# Tema visual (acuatico) — CSS + encabezado "hero". Solo presentacion, no toca la logica.
+# --------------------------------------------------------------------------------------
+THEME_CSS = """
+<style>
+.block-container { padding-top: 1.1rem; padding-bottom: 2rem; max-width: 1200px; }
+
+/* Encabezado hero con degradado oceanico animado */
+.hab-hero {
+  position: relative; border-radius: 18px; padding: 2.0rem 2.2rem 2.7rem; margin-bottom: 1.0rem;
+  overflow: hidden; color: #f7ffff;
+  background: linear-gradient(120deg,#062b3f 0%,#0a6b6b 42%,#1aa39a 72%,#46c39b 100%);
+  background-size: 220% 220%; animation: habflow 16s ease infinite;
+  box-shadow: 0 10px 30px rgba(6,43,63,.28);
+}
+@keyframes habflow { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
+.hab-hero h1 { margin:0; font-size:2.0rem; font-weight:800; text-shadow:0 2px 10px rgba(0,0,0,.25); }
+.hab-hero p { margin:.55rem 0 0; font-size:1.0rem; opacity:.96; max-width:64ch; }
+.hab-tags { margin-top:1rem; display:flex; gap:.5rem; flex-wrap:wrap; }
+.hab-tag { background:rgba(255,255,255,.16); border:1px solid rgba(255,255,255,.30);
+  padding:.28rem .7rem; border-radius:999px; font-size:.8rem; }
+.hab-wave { position:absolute; left:0; right:0; bottom:-1px; line-height:0; }
+.hab-wave svg { width:100%; height:44px; display:block; }
+
+/* Botones con acento agua */
+.stButton > button { border-radius:10px; font-weight:700; border:0; color:#04302f;
+  background:linear-gradient(120deg,#0fa3a3,#46c39b); transition:transform .08s ease, box-shadow .15s ease; }
+.stButton > button:hover { transform:translateY(-1px); box-shadow:0 6px 16px rgba(15,163,163,.35); color:#04302f; }
+
+/* Metricas como tarjeta */
+[data-testid="stMetric"] { background:#ffffff; border:1px solid #cfeae7; border-left:5px solid #0fa3a3;
+  border-radius:12px; padding:.8rem 1rem; box-shadow:0 2px 8px rgba(6,43,63,.06); }
+[data-testid="stAlert"] { border-radius:12px; }
+[data-testid="stVerticalBlockBorderWrapper"] { border-radius:14px; }
+
+/* Encabezados y sidebar */
+h2, h3 { color:#0a6b6b; }
+section[data-testid="stSidebar"] { background:linear-gradient(180deg,#e1f3f1 0%,#eef9f8 100%);
+  border-right:1px solid #cfeae7; }
+section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 { color:#0a6b6b; }
+</style>
+"""
+
+HERO_HTML = """
+<div class="hab-hero">
+  <h1>🌊 Alerta temprana de biomasa algal (HABs)</h1>
+  <p>Pronostico de riesgo de floraciones algales a <b>0–7 dias</b>. La clorofila-a se usa como
+     <b>proxy de biomasa</b>: la herramienta senala <b>riesgo</b>, no confirma toxicidad.</p>
+  <div class="hab-tags">
+    <span class="hab-tag">🛰️ Sentinel-2 (5 bandas)</span>
+    <span class="hab-tag">💧 5 cuerpos validados</span>
+    <span class="hab-tag">📈 Horizontes 0–7 dias</span>
+    <span class="hab-tag">🧪 XGBoost + Red neuronal</span>
+  </div>
+  <div class="hab-wave">
+    <svg viewBox="0 0 1440 60" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      <path fill="#f2fbfa" d="M0,32 C240,64 480,4 720,24 C960,46 1200,64 1440,26 L1440,60 L0,60 Z"></path>
+    </svg>
+  </div>
+</div>
+"""
+
 
 @st.cache_resource(show_spinner=False)
 def load_resources():
@@ -96,7 +158,9 @@ def body_median_spectral(path):
 # ----------------------------------------------------------------------------------------
 # UI
 # ----------------------------------------------------------------------------------------
-st.set_page_config(page_title="Alerta temprana de biomasa algal (HABs)", layout="wide")
+st.set_page_config(page_title="Alerta temprana de biomasa algal (HABs)", page_icon="🌊",
+                   layout="wide", initial_sidebar_state="expanded")
+st.markdown(THEME_CSS, unsafe_allow_html=True)
 
 with st.sidebar:
     st.header("Como leer esta herramienta")
@@ -113,9 +177,8 @@ with st.sidebar:
     st.caption("Modelo: XGBoost (intensidad + intervalos CQR) + Red neuronal (alerta), por "
                "grupo ecologico y horizonte. Pronostico causal sin fuga (validacion anidada).")
 
-st.title("🛰️ Alerta temprana de riesgo de biomasa algal (HABs)")
-st.markdown(DISCLAIMER)
-st.divider()
+st.markdown(HERO_HTML, unsafe_allow_html=True)
+st.caption(DISCLAIMER)
 
 # --- Selectores ---
 c1, c2, c3 = st.columns([2, 1, 1])
