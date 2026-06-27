@@ -127,6 +127,7 @@ def forecast_body(wb, t0=None, spec_override=None, res=None):
     thr_map = res["thr_body"] if res else joblib.load(os.path.join(MODELS, "thr_body.pkl"))
     thr_body = thr_map.get(wb, 10.0)
     thr_floracion = C.alert_threshold_ugl(thr_body)   # p85 acotado al nivel biologico (<=24 ug/L)
+    thr_elevada = C.elevated_threshold_ugl(thr_floracion)  # banda de aviso (< floracion, ordenado)
     if res:
         calib = res["calib"].get(group)
     else:
@@ -174,14 +175,14 @@ def forecast_body(wb, t0=None, spec_override=None, res=None):
         # RIESGO por BIOMASA prevista (consistente con el mapa y con lo que se ve): la clorofila
         # pronosticada vs el umbral biologico del cuerpo. prob_riesgo (clasificador calibrado) se
         # conserva como evidencia auxiliar de anomalia.
-        nivel = C.biomass_level(chl, thr_floracion)
+        nivel = C.biomass_level(chl, thr_floracion, thr_elevada)
         horizons.append({"horizon": h, "chl_pred": chl, "p10": p10, "p90": p90,
                          "prob_riesgo": p, "nivel": nivel,
                          "riesgo": bool(nivel == "floracion"),
                          "elevada": bool(nivel in ("elevada", "floracion"))})
     return {"water_body": wb, "group": group, "t0": t0, "chl0": float(chl0),
             "thr_body": float(thr_body), "thr_floracion": float(thr_floracion),
-            "n_water_px": n_water_px,
+            "thr_elevada": float(thr_elevada), "n_water_px": n_water_px,
             "alert_threshold": float(pthr), "horizons": horizons}
 
 
@@ -194,7 +195,7 @@ def predict_body(wb, t0=None):
     nota_conf = f" | confianza={confianza}" + (f" ({', '.join(flags)})" if flags else "")
     print(f"\n=== {wb.upper()} ({fc['group']}) | t0={t0.date()} (hace {age}d) | "
           f"chl-a actual={fc['chl0']:.1f} ug/L | floracion (chl-a)>={fc['thr_floracion']:.1f} ug/L | "
-          f"biomasa elevada>={C.THRESHOLDS['moderate']:.0f} ug/L{nota_conf} ===")
+          f"biomasa elevada>={fc['thr_elevada']:.1f} ug/L{nota_conf} ===")
     print(f"  {'horizonte':10s} {'chl-a_pred(ug/L)':>16s} {'banda P10-P90':>16s} {'prob_anomalia':>13s} {'NIVEL':>16s}")
     for hh in fc["horizons"]:
         banda = f"{hh['p10']:.1f}-{hh['p90']:.1f}" if hh["p10"] is not None else ""

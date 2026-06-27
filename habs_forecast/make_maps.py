@@ -205,7 +205,7 @@ def build_map_figure(wb, h, path, t0, res=None):
 
     thr_rel = (res["thr_body"] if res else joblib.load(os.path.join(MODELS, "thr_body.pkl"))).get(wb, 10.0)
     thr = C.alert_threshold_ugl(thr_rel)               # FLORACION: p85 acotado al nivel biologico (<=24)
-    thr_elev = float(C.THRESHOLDS["moderate"])         # BIOMASA ELEVADA: >=10 ug/L
+    thr_elev = C.elevated_threshold_ugl(thr)           # BIOMASA ELEVADA: banda de aviso (< floracion)
 
     # --- fondo satelital color verdadero (RGB = B4,B3,B2) con realce por percentiles ---
     rgb = np.dstack([feats2d["B4"], feats2d["B3"], feats2d["B2"]]).astype("float32")
@@ -233,17 +233,17 @@ def build_map_figure(wb, h, path, t0, res=None):
     from matplotlib.patches import Patch
     from matplotlib.lines import Line2D
     chl_ma = np.ma.masked_invalid(grid)                    # clorofila solo en agua
-    # color anclado al p98 de la escena -> resalta la variacion espacial DENTRO del cuerpo
-    # (el "donde hay mas biomasa"); el riesgo absoluto se marca con el contorno rojo (>= thr).
-    vmin = float(np.nanpercentile(grid, 2))
-    vmax = float(np.nanpercentile(grid, 98))
-    if not (vmax > vmin):                                   # escena casi plana: evita escala degenerada
-        vmax = vmin + 1.0
     wv = grid[np.isfinite(grid)]                            # valores SOLO en agua (denominador correcto)
     pct_alert = float((wv >= thr).mean() * 100) if wv.size else 0.0       # % AGUA en FLORACION (>= thr)
-    pct_elev  = float((wv >= thr_elev).mean() * 100) if wv.size else 0.0  # % AGUA con biomasa elevada (>=10)
+    pct_elev  = float((wv >= thr_elev).mean() * 100) if wv.size else 0.0  # % AGUA con biomasa elevada
     chlmean = float(np.nanmean(grid))
-    nivel_body = C.biomass_level(chlmean, thr)             # nivel global del cuerpo (segun la media)
+    nivel_body = C.biomass_level(chlmean, thr, thr_elev)  # nivel global del cuerpo (segun la media)
+    # COLOR ABSOLUTO y comparable entre escenas: el umbral de floracion cae en el ROJO. Asi una
+    # escena de biomasa baja se ve azul/verde (NO roja), a diferencia de un realce relativo por
+    # percentiles —que siempre pinta de rojo el tope de la escena aunque el valor sea bajo—.
+    from matplotlib.colors import TwoSlopeNorm
+    vmax = max(float(thr) * 1.8, float(np.nanpercentile(grid, 99)) if wv.size else float(thr) * 1.8)
+    norm = TwoSlopeNorm(vmin=0.0, vcenter=float(thr), vmax=float(vmax))
     waterf = water.astype("float32")
     riskf = np.where(np.isfinite(grid) & (grid >= thr), 1.0, 0.0)
     elevf = np.where(np.isfinite(grid) & (grid >= thr_elev), 1.0, 0.0)
@@ -259,21 +259,19 @@ def build_map_figure(wb, h, path, t0, res=None):
 
     # Panel 2: tierra en gris, agua coloreada por biomasa, contorno rojo = zona de riesgo
     ax[1].imshow(base_gray)
-    im = ax[1].imshow(chl_ma, cmap="turbo", vmin=vmin, vmax=vmax)
-    # dos niveles biologicos: contorno naranja = biomasa elevada (>=10); rojo = floracion (>= thr)
+    im = ax[1].imshow(chl_ma, cmap="turbo", norm=norm)
+    # dos niveles biologicos: contorno naranja = biomasa elevada; rojo = floracion (>= thr)
     if elevf.sum() > 0:
         ax[1].contour(elevf, levels=[0.5], colors="#ff9800", linewidths=1.0, linestyles="--")
     if riskf.sum() > 0:
         ax[1].contour(riskf, levels=[0.5], colors="red", linewidths=1.6)
     cb = fig.colorbar(im, ax=ax[1], fraction=0.046, pad=0.04)
     cb.set_label("Clorofila-a prevista (ug/L) — biomasa algal", fontsize=9)
-    sub = {"model":      "tierra = gris  ·  agua = color (azul bajo -> rojo alto)",
+    sub = {"model":      "tierra = gris  ·  color = clorofila absoluta (azul bajo -> rojo floracion)",
            "downscaled": f"tierra = gris  ·  patron espacial ESTIMADO de hoy, escalado al pronostico +{h}d",
            "uniform":    "tierra = gris  ·  agua uniforme (horizonte body-level: sin detalle por pixel)"}[spatial_mode]
     ax[1].set_title(f"2) Donde se espera mas biomasa algal (a +{h} dias)\n{sub}", fontsize=11)
     leg = [Patch(facecolor="0.6", label="Tierra (gris, fuera del analisis)"),
-           Patch(facecolor="#2b3ff5", label="Agua: biomasa BAJA"),
-           Patch(facecolor="#d62718", label="Agua: biomasa ALTA"),
            Line2D([0], [0], color="#ff9800", lw=2, ls="--", label=f"Biomasa ELEVADA (>= {thr_elev:.0f} ug/L)"),
            Line2D([0], [0], color="red", lw=2, label=f"FLORACION (>= {thr:.0f} ug/L)")]
     ax[1].legend(handles=leg, loc="lower left", fontsize=8, framealpha=0.92)
