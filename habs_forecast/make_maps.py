@@ -271,10 +271,15 @@ def build_map_figure(wb, h, path, t0, res=None):
            "downscaled": f"tierra = gris  ·  patron espacial ESTIMADO de hoy, escalado al pronostico +{h}d",
            "uniform":    "tierra = gris  ·  agua uniforme (horizonte body-level: sin detalle por pixel)"}[spatial_mode]
     ax[1].set_title(f"2) Donde se espera mas biomasa algal (a +{h} dias)\n{sub}", fontsize=11)
+    # Simbologia de color (absoluta, igual para todos los cuerpos y fechas):
+    # azul = clorofila baja -> verde media -> rojo alta (floracion). Contornos = umbrales.
     leg = [Patch(facecolor="0.6", label="Tierra (gris, fuera del analisis)"),
-           Line2D([0], [0], color="#ff9800", lw=2, ls="--", label=f"Biomasa ELEVADA (>= {thr_elev:.0f} ug/L)"),
-           Line2D([0], [0], color="red", lw=2, label=f"FLORACION (>= {thr:.0f} ug/L)")]
-    ax[1].legend(handles=leg, loc="lower left", fontsize=8, framealpha=0.92)
+           Patch(facecolor="#3b4cc0", label="Agua: biomasa BAJA (azul)"),
+           Patch(facecolor="#27a35a", label="Agua: biomasa MEDIA (verde)"),
+           Patch(facecolor="#c1121f", label="Agua: biomasa ALTA / floracion (rojo)"),
+           Line2D([0], [0], color="#ff9800", lw=2, ls="--", label=f"Limite ELEVADA (>= {thr_elev:.0f} ug/L)"),
+           Line2D([0], [0], color="red", lw=2, label=f"Limite FLORACION (>= {thr:.0f} ug/L)")]
+    ax[1].legend(handles=leg, loc="lower left", fontsize=7.5, framealpha=0.92)
     for a in ax:
         a.set_xticks([]); a.set_yticks([])
     fig.suptitle(f"{wb.upper()} ({'lago' if group=='freshwater' else 'costa'}) — pronostico de "
