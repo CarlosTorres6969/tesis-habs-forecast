@@ -152,13 +152,18 @@ def _spatial_pattern(group, feats2d, water, body_row, res):
     return None
 
 
-def build_map_figure(wb, h, path, t0, res=None):
+def build_map_figure(wb, h, path, t0, res=None, gradient_focus=False, focus_water=False):
     """Construye la figura de 2 paneles (1: satelital real; 2: biomasa algal prevista a +h d)
     para una escena Sentinel-2 dada. REUTILIZADA por make_map (CLI -> PNG) y por app.py
     (Streamlit -> st.pyplot); NO guarda ni cierra la figura (decide el llamador).
       path : raster Sentinel-2 de 5 bandas (B2,B3,B4,B5,B8).
       t0   : fecha de contexto para las features NO espectrales (broadcast); puede ser None.
       res  : recursos precargados (cache de Streamlit) opcionales; si None, lee de disco.
+      gradient_focus : si True, prioriza la LEGIBILIDAD del gradiente espacial de clorofila
+        (suaviza el campo para quitar ruido sal-y-pimienta y aligera los contornos de umbral
+        para que no tapen el color). Solo afecta la VISUALIZACION, no los stats ni el modelo.
+        Pensado para figuras de validacion en cuerpos casi totalmente en floracion (Cajon,
+        Fonseca), donde los contornos densos pintaban todo de rojo. Default False => sin cambios.
     Devuelve (fig, stats). Lanza ValueError con mensaje claro si la escena no sirve."""
     group = GROUP[wb]
     sp = _scene_pixels(path)
@@ -218,12 +223,22 @@ def build_map_figure(wb, h, path, t0, res=None):
     rgbn[~finite] = 0.0
 
     # --- recorte: enfoca el cuerpo de agua y elimina los bordes negros sin dato ---
-    rows, cols = np.any(water, axis=1), np.any(water, axis=0)
+    # focus_water: recorta al COMPONENTE de agua mayor (el cuerpo real), ignorando fragmentos
+    # dispersos (p.ej. nubes mal clasificadas). Util en cuerpos angostos/ramificados (Cajon).
+    wbbox = water
+    if focus_water:
+        from scipy import ndimage
+        lab, n = ndimage.label(water)
+        if n > 0:
+            sizes = np.bincount(lab.ravel()); sizes[0] = 0
+            wbbox = (lab == int(sizes.argmax()))
+    rows, cols = np.any(wbbox, axis=1), np.any(wbbox, axis=0)
     if rows.any() and cols.any():
         r0, r1 = np.where(rows)[0][[0, -1]]
         c0, c1 = np.where(cols)[0][[0, -1]]
-        mr = max(int(0.08 * (r1 - r0)), 8)        # margen ~8% para dar contexto de orilla
-        mc = max(int(0.08 * (c1 - c0)), 8)
+        fm = 0.12 if focus_water else 0.08        # margen mayor al enfocar para dar contexto
+        mr = max(int(fm * (r1 - r0)), 8)          # margen para contexto de orilla
+        mc = max(int(fm * (c1 - c0)), 8)
         r0, r1 = max(r0 - mr, 0), min(r1 + mr + 1, H)
         c0, c1 = max(c0 - mc, 0), min(c1 + mc + 1, W)
         rgbn = rgbn[r0:r1, c0:c1]
@@ -232,23 +247,37 @@ def build_map_figure(wb, h, path, t0, res=None):
 
     from matplotlib.patches import Patch
     from matplotlib.lines import Line2D
-    chl_ma = np.ma.masked_invalid(grid)                    # clorofila solo en agua
     wv = grid[np.isfinite(grid)]                            # valores SOLO en agua (denominador correcto)
     pct_alert = float((wv >= thr).mean() * 100) if wv.size else 0.0       # % AGUA en FLORACION (>= thr)
     pct_elev  = float((wv >= thr_elev).mean() * 100) if wv.size else 0.0  # % AGUA con biomasa elevada
     chlmean = float(np.nanmean(grid))
     nivel_body = C.biomass_level(chlmean, thr, thr_elev)  # nivel global del cuerpo (segun la media)
+    # GRID DE DISPLAY: en gradient_focus se suaviza (nan-aware) para quitar el ruido sal-y-pimienta
+    # y que el gradiente espacial se lea limpio. NO altera los stats (calculados sobre 'grid' crudo).
+    grid_disp = grid
+    if gradient_focus:
+        from scipy import ndimage
+        m = np.isfinite(grid).astype("float32")
+        filled = np.where(m > 0, grid, 0.0).astype("float32")
+        num = ndimage.gaussian_filter(filled, sigma=1.6)
+        den = ndimage.gaussian_filter(m, sigma=1.6)
+        sm = np.divide(num, den, out=np.full_like(num, np.nan), where=den > 1e-6)
+        grid_disp = np.where(np.isfinite(grid), sm, np.nan).astype("float32")
+    chl_ma = np.ma.masked_invalid(grid_disp)               # clorofila (display) solo en agua
     # COLOR RELATIVO a la escena (p2-p98): resalta el GRADIENTE espacial de clorofila dentro
     # del cuerpo (azul=menos -> rojo=mas), como las imagenes h3. La barra de color muestra los
     # VALORES reales en ug/L (los mismos que se mapean en la pagina); el RIESGO absoluto se marca
     # con los contornos (biomasa elevada / floracion) y con el % del titulo.
-    vmin = float(np.nanpercentile(grid, 2)) if wv.size else 0.0
-    vmax = float(np.nanpercentile(grid, 98)) if wv.size else 1.0
+    dv = grid_disp[np.isfinite(grid_disp)]
+    vmin = float(np.nanpercentile(dv, 2)) if dv.size else 0.0
+    vmax = float(np.nanpercentile(dv, 98)) if dv.size else 1.0
     if not (vmax > vmin):                                   # escena casi plana: evita escala degenerada
         vmax = vmin + 1.0
     waterf = water.astype("float32")
-    riskf = np.where(np.isfinite(grid) & (grid >= thr), 1.0, 0.0)
-    elevf = np.where(np.isfinite(grid) & (grid >= thr_elev), 1.0, 0.0)
+    # contornos sobre el grid de display (suaves en gradient_focus -> no fragmentan)
+    gcont = grid_disp if gradient_focus else grid
+    riskf = np.where(np.isfinite(gcont) & (gcont >= thr), 1.0, 0.0)
+    elevf = np.where(np.isfinite(gcont) & (gcont >= thr_elev), 1.0, 0.0)
     # tierra en GRIS (luminancia) para separar claramente agua (color) de terreno
     gray = 0.299 * rgbn[:, :, 0] + 0.587 * rgbn[:, :, 1] + 0.114 * rgbn[:, :, 2]
     base_gray = np.dstack([gray, gray, gray])
@@ -262,11 +291,15 @@ def build_map_figure(wb, h, path, t0, res=None):
     # Panel 2: tierra en gris, agua coloreada por biomasa, contorno rojo = zona de riesgo
     ax[1].imshow(base_gray)
     im = ax[1].imshow(chl_ma, cmap="turbo", vmin=vmin, vmax=vmax)
-    # dos niveles biologicos: contorno naranja = biomasa elevada; rojo = floracion (>= thr)
-    if elevf.sum() > 0:
-        ax[1].contour(elevf, levels=[0.5], colors="#ff9800", linewidths=1.0, linestyles="--")
+    # dos niveles biologicos: contorno naranja = biomasa elevada; rojo = floracion (>= thr).
+    # En gradient_focus se aligeran (y se omite el de 'elevada') para no tapar el gradiente.
+    lw_elev = 0.0 if gradient_focus else 1.0
+    lw_risk = 0.6 if gradient_focus else 1.6
+    a_cont  = 0.5 if gradient_focus else 1.0
+    if elevf.sum() > 0 and lw_elev > 0:
+        ax[1].contour(elevf, levels=[0.5], colors="#ff9800", linewidths=lw_elev, linestyles="--", alpha=a_cont)
     if riskf.sum() > 0:
-        ax[1].contour(riskf, levels=[0.5], colors="red", linewidths=1.6)
+        ax[1].contour(riskf, levels=[0.5], colors="red", linewidths=lw_risk, alpha=a_cont)
     cb = fig.colorbar(im, ax=ax[1], fraction=0.046, pad=0.04)
     cb.set_label("Clorofila-a prevista (ug/L) — biomasa algal", fontsize=9)
     sub = {"model":      "tierra = gris  ·  agua = gradiente de clorofila (azul menos -> rojo mas; valores en la barra)",

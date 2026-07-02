@@ -306,7 +306,7 @@ if st.button("🔍 Analizar", type="primary", disabled=disabled):
         st.stop()
     try:
         with st.spinner("Procesando escena y generando pronostico..."):
-            fig, stats = build_map_figure(wb, h, path, t0, res=res)
+            fig, stats = build_map_figure(wb, h, path, t0, res=res, gradient_focus=True)
             fc = forecast_body(wb, t0, spec_override=spec_override, res=res)
     except ValueError as e:
         st.error(f"No se pudo analizar la escena: {e}"); st.stop()
@@ -328,7 +328,8 @@ if st.button("🔍 Analizar", type="primary", disabled=disabled):
     st.caption(cap)
 
     # ELEMENTOS 1 y 2: imagen satelital real + mapa de biomasa prevista (2 paneles, estilo make_maps)
-    st.pyplot(fig, use_container_width=True)
+    # dpi=135 + bbox tight: misma calidad que las figuras de validacion (no el ~100 dpi por defecto).
+    st.pyplot(fig, use_container_width=True, dpi=135, bbox_inches="tight")
 
     # ELEMENTOS 3 y 4: alerta + banda de incertidumbre
     cA, cB = st.columns(2)
