@@ -42,3 +42,9 @@ venv/
 Thumbs.db
 .vscode/
 .idea/
+
+# === Node / herramientas de tooling (ruido, no forma parte de la tesis) ===
+node_modules/
+package.json
+package-lock.json
+.tokensave/

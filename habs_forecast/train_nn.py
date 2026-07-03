@@ -34,6 +34,11 @@ np.random.seed(C.RANDOM_STATE)
 OUT = os.path.join(C.DIR_REPORTS, "nn_metrics.json")
 LAMBDA_CLS = 0.5          # peso de la cabeza de alerta en la perdida
 MAX_EPOCHS, PATIENCE = 400, 30
+N_SEEDS_FIT = 3           # entrena varias inicializaciones y CONSERVA la mejor por validacion
+                          # interna: reduce la varianza por semilla desafortunada (las MLP
+                          # pequenas son sensibles a la init). NO cambia arquitectura ni contrato:
+                          # _fit sigue devolviendo UNA red / un state_dict, asi que train_final y
+                          # predict no cambian y los .pt ya guardados siguen cargando igual.
 
 
 class HABNet(nn.Module):
@@ -53,19 +58,10 @@ class HABNet(nn.Module):
         return self.reg_head(z).squeeze(-1), self.cls_head(z).squeeze(-1)
 
 
-def _fit(Xtr, ytr, ctr, n_in):
-    """Entrena con early stopping sobre un 15% de validacion interna."""
-    n = len(Xtr); idx = np.arange(n); rng = np.random.default_rng(C.RANDOM_STATE)
-    rng.shuffle(idx)
-    cut = int(n * 0.85)
-    tr_i, va_i = idx[:cut], idx[cut:]
-    Xt = torch.tensor(Xtr[tr_i], dtype=torch.float32)
-    yt = torch.tensor(ytr[tr_i], dtype=torch.float32)
-    ct = torch.tensor(ctr[tr_i], dtype=torch.float32)
-    Xv = torch.tensor(Xtr[va_i], dtype=torch.float32)
-    yv = torch.tensor(ytr[va_i], dtype=torch.float32)
-    cv = torch.tensor(ctr[va_i], dtype=torch.float32)
-
+def _fit_seed(Xt, yt, ct, Xv, yv, cv, n_in, seed, has_val):
+    """Entrena UNA red desde una inicializacion (semilla) concreta con early stopping.
+    Devuelve (red, mejor_vloss). Aislar la semilla aqui permite probar varias inits."""
+    torch.manual_seed(seed)
     net = HABNet(n_in)
     opt = torch.optim.Adam(net.parameters(), lr=5e-3, weight_decay=1e-3)
     mse, bce = nn.MSELoss(), nn.BCEWithLogitsLoss()
@@ -78,7 +74,7 @@ def _fit(Xtr, ytr, ctr, n_in):
         net.eval()
         with torch.no_grad():
             vr, vc = net(Xv)
-            vloss = (mse(vr, yv) + LAMBDA_CLS * bce(vc, cv)).item() if len(va_i) else loss.item()
+            vloss = (mse(vr, yv) + LAMBDA_CLS * bce(vc, cv)).item() if has_val else loss.item()
         if vloss < best - 1e-4:
             best, best_state, wait = vloss, {k: v.clone() for k, v in net.state_dict().items()}, 0
         else:
@@ -88,7 +84,32 @@ def _fit(Xtr, ytr, ctr, n_in):
     if best_state:
         net.load_state_dict(best_state)
     net.eval()
-    return net
+    return net, best
+
+
+def _fit(Xtr, ytr, ctr, n_in):
+    """Entrena con early stopping sobre un 15% de validacion interna. Para robustez a la semilla
+    (las MLP pequenas dependen de la init) entrena N_SEEDS_FIT inicializaciones y CONSERVA la
+    mejor por perdida de validacion interna. Sigue devolviendo UNA red (mismo contrato de antes:
+    train_final guarda un state_dict, predict carga uno; nada aguas abajo cambia)."""
+    n = len(Xtr); idx = np.arange(n); rng = np.random.default_rng(C.RANDOM_STATE)
+    rng.shuffle(idx)
+    cut = int(n * 0.85)
+    tr_i, va_i = idx[:cut], idx[cut:]
+    has_val = len(va_i) > 0
+    Xt = torch.tensor(Xtr[tr_i], dtype=torch.float32)
+    yt = torch.tensor(ytr[tr_i], dtype=torch.float32)
+    ct = torch.tensor(ctr[tr_i], dtype=torch.float32)
+    Xv = torch.tensor(Xtr[va_i], dtype=torch.float32)
+    yv = torch.tensor(ytr[va_i], dtype=torch.float32)
+    cv = torch.tensor(ctr[va_i], dtype=torch.float32)
+
+    best_net, best_v = None, float("inf")
+    for s in range(max(1, N_SEEDS_FIT)):
+        net, v = _fit_seed(Xt, yt, ct, Xv, yv, cv, n_in, C.RANDOM_STATE + s, has_val)
+        if v < best_v:                              # conserva la init con mejor validacion
+            best_v, best_net = v, net
+    return best_net
 
 
 def group_oos(d, feats):

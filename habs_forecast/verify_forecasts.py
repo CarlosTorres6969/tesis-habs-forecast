@@ -9,7 +9,9 @@ calcula el desempeno REALIZADO:
   - alert_hit: si la bandera de RIESGO acerto el evento real (chl_real >= umbral del cuerpo).
 
 Escribe artifacts/reports/forecast_verification.csv (detalle) y un resumen por
-(grupo, horizonte): MAE, cobertura empirica de la banda y hit-rate de la alerta.
+(grupo, horizonte): MAE, cobertura empirica de la banda y desempeno de la ALERTA con las
+metricas estandar de pronostico de eventos (POD, FAR, precision, F1; mas honestas que la
+exactitud cuando el evento es raro).
 
 NO entrena ni ajusta nada: es validacion operativa de lo ya pronosticado (cierra el lazo).
 El nucleo (verify) es PURO y testeable: recibe DataFrames y devuelve (detalle, resumen).
@@ -48,9 +50,16 @@ def verify(log_df, target_df, thr_body):
       log_df    : filas de la bitacora (run_forecast SCHEMA).
       target_df : combined_target (water_body, fecha, chl_ugl).
       thr_body  : dict {cuerpo: umbral de alerta} para definir el evento real.
-    Solo evalua pronosticos MADURADOS (con target real disponible)."""
+    Solo evalua pronosticos MADURADOS (con target real disponible).
+    La bitacora se acumula por apend: un mismo pronostico (cuerpo, horizonte, t0) puede repetirse
+    en varias corridas (run_ts). Se DEDUPLICA quedandose con la corrida MAS RECIENTE, para no
+    contar el mismo pronostico varias veces (inflaria n y sesgaria MAE/POD/FAR) y para que la
+    verificacion sea idempotente frente a re-ejecuciones o backfill."""
     log_df = log_df.copy()
     log_df["t0"] = pd.to_datetime(log_df["t0"]).dt.normalize()
+    if "run_ts" in log_df.columns:
+        log_df = (log_df.sort_values("run_ts")
+                  .drop_duplicates(["water_body", "horizon", "t0"], keep="last"))
     target_df = target_df.copy()
     target_df["fecha"] = pd.to_datetime(target_df["fecha"], utc=True, errors="coerce") \
         .dt.tz_localize(None).dt.normalize()
@@ -68,7 +77,14 @@ def verify(log_df, target_df, thr_body):
         p10, p90 = r.get("p10"), r.get("p90")
         in_band = (pd.notna(p10) and pd.notna(p90) and float(p10) <= chl_real <= float(p90))
         event_real = bool(chl_real >= thr)
-        alerta_pred = bool(r["riesgo"])
+        # La alerta se RECOMPUTA desde chl_pred vs el umbral ACTUAL del cuerpo, NO se toma el flag
+        # 'riesgo' guardado: la bitacora se acumula por apend a lo largo de versiones del codigo y la
+        # DEFINICION de alerta pudo cambiar (p.ej. de prob-clasificador a nivel de biomasa), dejando
+        # flags historicos inconsistentes. chl_pred es una salida estable del modelo; recomputar aqui
+        # evalua una politica de alerta UNICA y consistente (simetrico con event_real, que ya se
+        # recomputa desde chl_real). Fallback al flag guardado solo si faltara chl_pred.
+        chl_pred = r.get("chl_pred")
+        alerta_pred = (bool(float(chl_pred) >= thr) if pd.notna(chl_pred) else bool(r["riesgo"]))
         rows.append({
             "run_ts": r.get("run_ts"), "water_body": wb, "group": r.get("group"),
             "t0": r["t0"].date().isoformat(), "horizon": h,
@@ -88,13 +104,44 @@ def verify(log_df, target_df, thr_body):
         return detail, pd.DataFrame()
 
     summary = (detail.groupby(["group", "horizon"])
-               .agg(n=("abs_error", "size"),
-                    MAE=("abs_error", "mean"),
-                    cobertura_banda=("in_band", "mean"),
-                    hit_rate_alerta=("alert_hit", "mean"),
-                    eventos_reales=("event_real", "sum"))
+               .apply(_group_metrics, include_groups=False)
                .reset_index())
     return detail, summary
+
+
+def _group_metrics(g):
+    """Metricas de desempeno por (grupo, horizonte). Ademas del error de intensidad y la
+    cobertura de la banda, desglosa la ALERTA con las metricas ESTANDAR de pronostico de
+    eventos (mas honestas que la exactitud cuando el evento es raro):
+      - POD (probability of detection = recall = TP/(TP+FN)): que fraccion de eventos reales
+        se alerto. NaN si no hubo eventos en la ventana.
+      - FAR (false alarm ratio = FP/(TP+FP)): que fraccion de las alertas fue falsa. NaN si no
+        se emitio ninguna alerta.
+      - precision (TP/(TP+FP)) y F1 (media armonica de precision y POD).
+    Se conserva hit_rate_alerta (exactitud: aciertos incl. no-eventos) para continuidad, pero
+    con eventos raros infla el numero; POD/FAR/F1 son la lectura defendible."""
+    pred = g["riesgo_pred"].astype(bool)
+    real = g["event_real"].astype(bool)
+    tp = int((pred & real).sum())
+    fp = int((pred & ~real).sum())
+    fn = int((~pred & real).sum())
+    pod = tp / (tp + fn) if (tp + fn) else float("nan")          # recall / deteccion
+    far = fp / (tp + fp) if (tp + fp) else float("nan")          # razon de falsas alarmas
+    prec = tp / (tp + fp) if (tp + fp) else float("nan")
+    f1 = (2 * prec * pod / (prec + pod)
+          if (tp + fp) and (tp + fn) and (prec + pod) > 0 else float("nan"))
+    return pd.Series({
+        "n": int(len(g)),
+        "MAE": float(g["abs_error"].mean()),
+        "cobertura_banda": float(g["in_band"].mean()),
+        "eventos_reales": int(real.sum()),
+        "alertas_emitidas": int(pred.sum()),
+        "POD": pod,
+        "FAR": far,
+        "precision": prec,
+        "F1": f1,
+        "hit_rate_alerta": float(g["alert_hit"].mean()),
+    })
 
 
 def main():
@@ -121,8 +168,10 @@ def main():
     print(summary.to_string(index=False))
     print(f"\nDetalle -> {OUT_DETAIL}")
     print(f"Resumen -> {OUT_SUMMARY}")
-    print("\nNota: MAE en ug/L; cobertura_banda objetivo ~0.80 (CQR); "
-          "hit_rate_alerta = acierto de la bandera de riesgo vs evento real.")
+    print("\nNota: MAE en ug/L; cobertura_banda objetivo ~0.80 (CQR). Alerta (eventos raros): "
+          "POD = fraccion de eventos detectados (recall), FAR = fraccion de alertas falsas, "
+          "F1 = balance precision/POD. hit_rate_alerta (exactitud) se conserva pero infla con "
+          "eventos raros -> leer POD/FAR/F1.")
 
 
 if __name__ == "__main__":

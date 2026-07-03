@@ -207,50 +207,86 @@ def build_map_figure(wb, h, path, t0, res=None, gradient_focus=False, focus_wate
             spatial_mode = "downscaled"
     grid = np.full((H, W), np.nan, dtype="float32")
     grid[water] = chl
+    grid_full = grid                     # referencia SIN recortar: los stats se calculan sobre TODA
+                                         # el agua del cuerpo (el recorte de abajo solo afecta el DISPLAY,
+                                         # no los valores de retorno de build_map_figure).
 
     thr_rel = (res["thr_body"] if res else joblib.load(os.path.join(MODELS, "thr_body.pkl"))).get(wb, 10.0)
     thr = C.alert_threshold_ugl(thr_rel)               # FLORACION: p85 acotado al nivel biologico (<=24)
     thr_elev = C.elevated_threshold_ugl(thr)           # BIOMASA ELEVADA: banda de aviso (< floracion)
 
     # --- fondo satelital color verdadero (RGB = B4,B3,B2) con realce por percentiles ---
+    # Se calculan DOS estiramientos distintos (a resolucion completa, ANTES del recorte):
+    #  * rgb_water: percentiles p2-p98 SOLO sobre pixeles de agua -> el panel 1 deja de comprimir
+    #    el agua a negro (la tierra brillante ya no domina el estiramiento). Fallback a toda la
+    #    escena si hay <50 px de agua.
+    #  * rgb_scene: percentiles sobre TODA la escena -> del que se deriva el GRIS de la tierra del
+    #    panel 2 (si se usara rgb_water, la tierra se saturaria a blanco).
     rgb = np.dstack([feats2d["B4"], feats2d["B3"], feats2d["B2"]]).astype("float32")
     finite = np.isfinite(rgb).all(axis=2) & (rgb.sum(axis=2) > 0)
-    rgbn = np.zeros_like(rgb)
+    rgb_water = np.zeros_like(rgb)                 # panel 1 (color verdadero, contraste en agua)
+    rgb_scene = np.zeros_like(rgb)                 # panel 2 (gris de tierra, contraste de escena)
     for k in range(3):
         ch = rgb[:, :, k]
-        lo, hi = np.nanpercentile(ch[finite], 2), np.nanpercentile(ch[finite], 98)
-        rgbn[:, :, k] = np.clip((ch - lo) / (hi - lo + 1e-9), 0, 1) ** 0.8   # gamma
-    rgbn[~finite] = 0.0
+        ref = ch[water & finite]                   # estiramiento del panel 1 anclado al agua
+        if ref.size < 50:
+            ref = ch[finite]
+        lo, hi = np.nanpercentile(ref, 2), np.nanpercentile(ref, 98)
+        rgb_water[:, :, k] = np.clip((ch - lo) / (hi - lo + 1e-9), 0, 1) ** 0.8   # gamma
+        slo, shi = np.nanpercentile(ch[finite], 2), np.nanpercentile(ch[finite], 98)
+        rgb_scene[:, :, k] = np.clip((ch - slo) / (shi - slo + 1e-9), 0, 1) ** 0.8
+    rgb_water[~finite] = 0.0
+    rgb_scene[~finite] = 0.0
 
-    # --- recorte: enfoca el cuerpo de agua y elimina los bordes negros sin dato ---
-    # focus_water: recorta al COMPONENTE de agua mayor (el cuerpo real), ignorando fragmentos
-    # dispersos (p.ej. nubes mal clasificadas). Util en cuerpos angostos/ramificados (Cajon).
-    wbbox = water
-    if focus_water:
-        from scipy import ndimage
-        lab, n = ndimage.label(water)
-        if n > 0:
-            sizes = np.bincount(lab.ravel()); sizes[0] = 0
-            wbbox = (lab == int(sizes.argmax()))
-    rows, cols = np.any(wbbox, axis=1), np.any(wbbox, axis=0)
-    if rows.any() and cols.any():
+    # --- ENCUADRE: centra el recorte en el CUERPO DE AGUA COHERENTE MAS GRANDE ---
+    # El bbox de TODA el agua detectada se corre por parches espurios (nubes/sombras mal
+    # clasificadas) y deja el cuerpo real fuera de cuadro. En su lugar se etiquetan los
+    # componentes conexos y se encuadra el MAYOR (el cuerpo fisico). Los demas pixeles de agua
+    # que caigan dentro del cuadro se conservan visibles; solo el ENCUADRE lo fija el mayor.
+    # focus_water: solo agranda el margen (mas contexto de orilla) en cuerpos angostos/ramificados.
+    from scipy import ndimage
+    body_note = None
+    lab, n = ndimage.label(water)
+    frame = None
+    if n > 0:
+        sizes = np.bincount(lab.ravel()); sizes[0] = 0
+        biggest = int(sizes.argmax())
+        if sizes[biggest] >= 50:                   # cuerpo coherente minimo
+            frame = (lab == biggest)
+    if frame is not None:
+        rows, cols = np.any(frame, axis=1), np.any(frame, axis=0)
         r0, r1 = np.where(rows)[0][[0, -1]]
         c0, c1 = np.where(cols)[0][[0, -1]]
-        fm = 0.12 if focus_water else 0.08        # margen mayor al enfocar para dar contexto
-        mr = max(int(fm * (r1 - r0)), 8)          # margen para contexto de orilla
+        fm = 0.12 if focus_water else 0.08         # margen mayor al enfocar para dar contexto
+        mr = max(int(fm * (r1 - r0)), 8)           # margen para contexto de orilla
         mc = max(int(fm * (c1 - c0)), 8)
-        r0, r1 = max(r0 - mr, 0), min(r1 + mr + 1, H)
-        c0, c1 = max(c0 - mc, 0), min(c1 + mc + 1, W)
-        rgbn = rgbn[r0:r1, c0:c1]
+        r0, r1 = r0 - mr, r1 + mr + 1
+        c0, c1 = c0 - mc, c1 + mc + 1
+        # minimo de encuadre: un cuerpo chico frente a la escena queda con poco contexto; se
+        # expande el cuadro (centrado en el cuerpo) hasta un tamano minimo para ver la orilla.
+        min_h = int(min(H, max(72, 0.18 * H)))
+        min_w = int(min(W, max(72, 0.18 * W)))
+        if (r1 - r0) < min_h:
+            cr = (r0 + r1) // 2; r0, r1 = cr - min_h // 2, cr + min_h // 2
+        if (c1 - c0) < min_w:
+            cc = (c0 + c1) // 2; c0, c1 = cc - min_w // 2, cc + min_w // 2
+        r0, r1 = max(r0, 0), min(r1, H)
+        c0, c1 = max(c0, 0), min(c1, W)
+        rgb_water = rgb_water[r0:r1, c0:c1]
+        rgb_scene = rgb_scene[r0:r1, c0:c1]
         grid = grid[r0:r1, c0:c1]
         water = water[r0:r1, c0:c1]
+    else:
+        # fallback robusto: sin cuerpo de agua coherente NO se recorta (evita un cuadro roto);
+        # se muestra la escena completa y se avisa en el subtitulo del panel 1.
+        body_note = "cuerpo de agua no detectado con claridad en esta escena"
 
     from matplotlib.patches import Patch
     from matplotlib.lines import Line2D
-    wv = grid[np.isfinite(grid)]                            # valores SOLO en agua (denominador correcto)
+    wv = grid_full[np.isfinite(grid_full)]                  # valores SOLO en agua (TODO el cuerpo, sin recorte)
     pct_alert = float((wv >= thr).mean() * 100) if wv.size else 0.0       # % AGUA en FLORACION (>= thr)
     pct_elev  = float((wv >= thr_elev).mean() * 100) if wv.size else 0.0  # % AGUA con biomasa elevada
-    chlmean = float(np.nanmean(grid))
+    chlmean = float(np.nanmean(grid_full))
     nivel_body = C.biomass_level(chlmean, thr, thr_elev)  # nivel global del cuerpo (segun la media)
     # GRID DE DISPLAY: en gradient_focus se suaviza (nan-aware) para quitar el ruido sal-y-pimienta
     # y que el gradiente espacial se lea limpio. NO altera los stats (calculados sobre 'grid' crudo).
@@ -278,15 +314,20 @@ def build_map_figure(wb, h, path, t0, res=None, gradient_focus=False, focus_wate
     gcont = grid_disp if gradient_focus else grid
     riskf = np.where(np.isfinite(gcont) & (gcont >= thr), 1.0, 0.0)
     elevf = np.where(np.isfinite(gcont) & (gcont >= thr_elev), 1.0, 0.0)
-    # tierra en GRIS (luminancia) para separar claramente agua (color) de terreno
-    gray = 0.299 * rgbn[:, :, 0] + 0.587 * rgbn[:, :, 1] + 0.114 * rgbn[:, :, 2]
+    # tierra en GRIS (luminancia) para separar claramente agua (color) de terreno.
+    # OJO: se deriva de rgb_scene (estirado sobre TODA la escena), no de rgb_water, para que la
+    # tierra brillante no se sature a blanco.
+    gray = 0.299 * rgb_scene[:, :, 0] + 0.587 * rgb_scene[:, :, 1] + 0.114 * rgb_scene[:, :, 2]
     base_gray = np.dstack([gray, gray, gray])
 
-    fig, ax = plt.subplots(1, 2, figsize=(15, 7.2))
+    fig, ax = plt.subplots(1, 2, figsize=(15, 7.2), dpi=200)
     # Panel 1: contexto satelital real + contorno del cuerpo de agua
-    ax[0].imshow(rgbn)
+    ax[0].imshow(rgb_water)
     ax[0].contour(waterf, levels=[0.5], colors="cyan", linewidths=1.0)
-    ax[0].set_title("1) Imagen satelital real\nlinea cian = borde del cuerpo de agua analizado", fontsize=11)
+    p1_sub = "linea cian = borde del cuerpo de agua analizado"
+    if body_note:
+        p1_sub += f"\n({body_note})"
+    ax[0].set_title(f"1) Imagen satelital real\n{p1_sub}", fontsize=11)
 
     # Panel 2: tierra en gris, agua coloreada por biomasa, contorno rojo = zona de riesgo
     ax[1].imshow(base_gray)
@@ -351,7 +392,7 @@ def make_map(wb, h=7, scene=None):
         print(f"{wb}: {e}"); return
     os.makedirs(REPORTS, exist_ok=True)
     out = os.path.join(REPORTS, f"mapa_{wb}_h{h}.png")
-    fig.savefig(out, dpi=130, bbox_inches="tight"); plt.close(fig)
+    fig.savefig(out, dpi=200, bbox_inches="tight"); plt.close(fig)
     print(f"  {wb} +{h}d -> {out} | chl-a media={stats['chl_mean']:.1f} ug/L "
           f"| area de riesgo/biomasa alta={stats['pct_alert']:.0f}%")
 

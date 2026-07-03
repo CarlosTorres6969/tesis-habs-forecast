@@ -23,7 +23,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import config as C
 from predict import forecast_body, GROUP, SPEC, MODELS
-from make_maps import build_map_figure, _scene_pixels, KEY2FOLDER
+from make_maps import build_map_figure, _scene_pixels, KEY2FOLDER, _clear_water_score
 from train_nn import HABNet
 import guards
 
@@ -188,6 +188,17 @@ def list_example_scenes(wb):
     return sorted(items, reverse=True)
 
 
+@st.cache_data(show_spinner=False)
+def rank_scenes_by_quality(wb):
+    """Ordena las escenas del cuerpo por CALIDAD de agua limpia (mejor primero), reutilizando
+    _clear_water_score de make_maps (mismo criterio que _best_scene del CLI): premia que el agua
+    forme UN cuerpo coherente y penaliza escenas nubladas donde el cuerpo se fragmenta o ni
+    aparece. Cacheado por cuerpo. Devuelve lista de (fecha, ruta, score) ordenada."""
+    scored = [(fecha, path, _clear_water_score(path)) for fecha, path in list_example_scenes(wb)]
+    scored.sort(key=lambda x: x[2], reverse=True)
+    return scored
+
+
 def body_median_spectral(path):
     """Mediana espectral del agua de una escena externa (GeoTIFF subido) -> para forecast_body.
     Robusto: si el archivo no es un raster valido o no tiene 5 bandas, devuelve None (no trona)."""
@@ -221,7 +232,10 @@ with st.sidebar:
         "bandas red-edge e infrarrojo son las que estiman clorofila; una foto comun no las tiene.\n"
         "- **Validado solo para 5 cuerpos** (abajo). Fuera de ellos no hay modelo ni calibracion.\n"
         "- **Clorofila-a = proxy de biomasa**, no de toxicidad. La alerta marca **riesgo** que "
-        "amerita verificacion de campo.")
+        "amerita verificacion de campo.\n"
+        "- **Sentinel-2 mide el PIGMENTO (clorofila-a), no la especie ni la toxina**: no distingue "
+        "cianobacterias (lagos) ni dinoflagelados de marea roja (costa). Identificar el organismo "
+        "y confirmar toxinas exige **muestreo de campo** (microscopia / ensayos de toxinas).")
     st.divider()
     st.caption("Modelo: XGBoost (intensidad + intervalos CQR) + Red neuronal (alerta), por "
                "grupo ecologico y horizonte. Pronostico causal sin fuga (validacion anidada).")
@@ -257,14 +271,32 @@ modo = st.radio("Escena Sentinel-2", ["Usar escena de ejemplo", "Subir GeoTIFF"]
 path, t0, spec_override, scene_err = None, None, None, None
 
 if modo == "Usar escena de ejemplo":
-    escenas = list_example_scenes(wb)
-    if not escenas:
+    with st.spinner("Evaluando calidad de las escenas disponibles..."):
+        ranked = rank_scenes_by_quality(wb)          # (fecha, ruta, score) mejor primero
+    if not ranked:
         scene_err = f"No hay escenas Sentinel-2 de ejemplo para {NICE.get(wb, wb)}."
     else:
-        fechas = [e[0] for e in escenas]
-        sel = st.selectbox(f"Escena disponible ({len(escenas)} fechas)", fechas)
-        path = dict(escenas)[sel]
+        best_fecha, best_path, best_score = ranked[0]
+        auto = st.checkbox("Usar automaticamente la mejor escena (agua mas limpia)", value=True,
+                           help="Evita caer en escenas nubladas donde el cuerpo de agua ni aparece. "
+                                "Desmarca para elegir la fecha manualmente.")
+        if auto:
+            sel, path, sel_score = best_fecha, best_path, best_score
+            st.caption(f"Escena elegida automaticamente por calidad de agua limpia: **{best_fecha}**.")
+        else:
+            # dropdown ORDENADO por calidad (mejor primero); la mejor se marca con estrella
+            fechas = [f for f, _, _ in ranked]
+            marca = {best_fecha: f"{best_fecha}  ⭐ mejor (agua mas limpia)"}
+            sel = st.selectbox(f"Escena disponible ({len(ranked)} fechas, ordenadas por calidad)",
+                               fechas, format_func=lambda f: marca.get(f, f))
+            rec = next(r for r in ranked if r[0] == sel)
+            path, sel_score = rec[1], rec[2]
         t0 = pd.Timestamp(sel) if re.match(r"\d{4}-\d{2}-\d{2}", sel) else None
+        # aviso si la escena elegida no tiene un cuerpo de agua coherente (nublada/dispersa)
+        if sel_score <= 0 or (best_score > 0 and sel_score < 0.15 * best_score):
+            st.warning("⚠️ En esta escena el cuerpo de agua no se detecta con claridad "
+                       "(probable nubosidad/neblina). Prueba otra fecha o usa la mejor escena "
+                       "automaticamente para un encuadre y color mas legibles.")
 else:
     up = st.file_uploader("Sube un GeoTIFF Sentinel-2 de 5 bandas (orden B2,B3,B4,B5,B8)",
                           type=["tif", "tiff"])
@@ -328,8 +360,8 @@ if st.button("🔍 Analizar", type="primary", disabled=disabled):
     st.caption(cap)
 
     # ELEMENTOS 1 y 2: imagen satelital real + mapa de biomasa prevista (2 paneles, estilo make_maps)
-    # dpi=135 + bbox tight: misma calidad que las figuras de validacion (no el ~100 dpi por defecto).
-    st.pyplot(fig, use_container_width=True, dpi=135, bbox_inches="tight")
+    # dpi=200 + bbox tight: misma nitidez que los PNG del CLI (no el ~100 dpi por defecto de Streamlit).
+    st.pyplot(fig, use_container_width=True, dpi=200, bbox_inches="tight")
 
     # ELEMENTOS 3 y 4: alerta + banda de incertidumbre
     cA, cB = st.columns(2)
