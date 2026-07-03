@@ -12,9 +12,11 @@ Solo funciona para los 5 cuerpos validados (config.REGIONS) y con escenas Sentin
 Correr (local, para la defensa):  streamlit run app.py
 """
 from __future__ import annotations
-import os, glob, re, tempfile, logging
+import os, glob, re, tempfile, logging, io
 import matplotlib
 matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from PIL import Image
 import numpy as np
 import pandas as pd
 import joblib
@@ -161,6 +163,37 @@ def shap_bar_figure(group, h, topn=8):
                       paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,.55)",
                       xaxis_title="Influencia media (|SHAP|)", font=dict(family="Segoe UI"))
     return fig
+
+
+def forecast_animation_gif(wb, path, t0, res, horizons=(1, 3, 5, 7), dpi=95, ms_per_frame=1200):
+    """Genera un GIF que se reproduce solo (estilo pronostico del clima en TV): recorre los mapas
+    de biomasa prevista a +1/+3/+5/+7 dias sobre la MISMA escena. Reutiliza build_map_figure por
+    horizonte (sin tocar modelado); lo que cambia entre cuadros es el NIVEL previsto por el modelo.
+    Devuelve bytes del GIF o None si no se pudo generar ningun cuadro."""
+    frames = []
+    for hh in horizons:
+        if (GROUP[wb], hh) not in res["bundles"]:
+            continue
+        try:
+            fig, _ = build_map_figure(wb, hh, path, t0, res=res, gradient_focus=True)
+        except Exception as e:
+            log.warning("frame +%dd fallo: %s", hh, e)
+            continue
+        fig.suptitle(f"Pronostico de biomasa algal  ·  +{hh} dias", fontsize=17,
+                     fontweight="bold", color="#0a6b6b", y=0.99)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=dpi)      # figsize fijo -> cuadros del mismo tamaño
+        plt.close(fig)
+        buf.seek(0)
+        frames.append(Image.open(buf).convert("RGB"))
+    if not frames:
+        return None
+    size = frames[0].size
+    frames = [f if f.size == size else f.resize(size) for f in frames]
+    out = io.BytesIO()
+    frames[0].save(out, format="GIF", save_all=True, append_images=frames[1:],
+                   duration=ms_per_frame, loop=0, disposal=2)
+    return out.getvalue()
 
 # --------------------------------------------------------------------------------------
 # Tema visual (acuatico) — CSS + encabezado "hero". Solo presentacion, no toca la logica.
@@ -467,6 +500,11 @@ if scene_err:
     st.error(scene_err)
 
 # --- Analizar ---
+# La casilla se define ANTES del boton: asi su valor ya esta disponible en el rerun del clic.
+animate = st.checkbox(
+    "🎬 Mostrar animación tipo pronóstico del clima (recorre +1 → +7 días)", value=False,
+    help="Genera un video corto que recorre la biomasa algal prevista a 1, 3, 5 y 7 días sobre la "
+         "misma escena, como un pronóstico del clima en la tele. Tarda unos segundos mas.")
 disabled = path is None
 if st.button("🔍 Analizar", type="primary", disabled=disabled):
     res = load_resources()
@@ -502,6 +540,26 @@ if st.button("🔍 Analizar", type="primary", disabled=disabled):
     # ELEMENTOS 1 y 2: imagen satelital real + mapa de biomasa prevista (2 paneles, estilo make_maps)
     # dpi=200 + bbox tight: misma nitidez que los PNG del CLI (no el ~100 dpi por defecto de Streamlit).
     st.pyplot(fig, use_container_width=True, dpi=200, bbox_inches="tight")
+
+    # ANIMACION tipo pronostico del clima (opcional): recorre +1/+3/+5/+7 d como un video.
+    # Cacheada por escena en session_state -> no se regenera al cambiar de horizonte o pestaña.
+    if animate:
+        sig = f"{wb}|{path}|{fc['t0']}"
+        if st.session_state.get("anim_sig") != sig:
+            with st.spinner("Generando animación tipo pronóstico (1 → 7 días)..."):
+                st.session_state["anim_gif"] = forecast_animation_gif(wb, path, fc["t0"], res)
+                st.session_state["anim_sig"] = sig
+        gif = st.session_state.get("anim_gif")
+        if gif:
+            st.markdown("### 🎬 Animación del pronóstico (1 → 7 días)")
+            st.image(gif, use_container_width=True)
+            st.caption("Biomasa algal prevista a 1, 3, 5 y 7 días sobre la misma escena (se reproduce "
+                       "en bucle, como un pronóstico del clima). La textura espacial viene de la "
+                       "escena actual; lo que cambia entre cuadros es el NIVEL que predice el modelo. "
+                       "A +1 y +7 días es nivel de cuerpo repartido por el patrón actual; a +3 y +5 "
+                       "el gradiente lo aporta el modelo espectral.")
+        else:
+            st.info("No se pudo generar la animación para esta escena.")
 
     # ELEMENTOS 3 y 4: alerta + banda de incertidumbre
     cA, cB = st.columns(2)
