@@ -309,14 +309,34 @@ def list_example_scenes(wb):
     return sorted(items, reverse=True)
 
 
-@st.cache_data(show_spinner=False)
-def rank_scenes_by_quality(wb):
+# Cota de escaneo: puntuar calidad de agua lee un raster por escena; algunos cuerpos costeros
+# tienen rasters pesados (~0.6 s c/u) y evaluarlos TODOS al cargar bloqueaba la UI 30-60 s. Se
+# acota a las mas recientes y se muestra barra de avance (suficiente para elegir una escena limpia).
+MAX_RANK_SCENES = 40
+
+
+def rank_scenes_with_progress(wb):
     """Ordena las escenas del cuerpo por CALIDAD de agua limpia (mejor primero), reutilizando
-    _clear_water_score de make_maps (mismo criterio que _best_scene del CLI): premia que el agua
-    forme UN cuerpo coherente y penaliza escenas nubladas donde el cuerpo se fragmenta o ni
-    aparece. Cacheado por cuerpo. Devuelve lista de (fecha, ruta, score) ordenada."""
-    scored = [(fecha, path, _clear_water_score(path)) for fecha, path in list_example_scenes(wb)]
+    _clear_water_score de make_maps (premia agua coherente, penaliza nubosidad). Solo puntua las
+    MAX_RANK_SCENES mas recientes, muestra una BARRA DE PROGRESO (para que no parezca colgada) y
+    guarda el resultado en session_state -> se calcula una sola vez por cuerpo. Devuelve lista de
+    (fecha, ruta, score) ordenada, o [] si no hay escenas."""
+    key = f"ranked_{wb}"
+    if key in st.session_state:
+        return st.session_state[key]
+    scenes = list_example_scenes(wb)[:MAX_RANK_SCENES]     # mas recientes primero; acota el I/O
+    if not scenes:
+        st.session_state[key] = []
+        return []
+    bar = st.progress(0.0, text=f"Evaluando calidad de {len(scenes)} escenas recientes de "
+                                f"{NICE.get(wb, wb)}...")
+    scored = []
+    for i, (fecha, path) in enumerate(scenes):
+        scored.append((fecha, path, _clear_water_score(path)))
+        bar.progress((i + 1) / len(scenes))
+    bar.empty()
     scored.sort(key=lambda x: x[2], reverse=True)
+    st.session_state[key] = scored
     return scored
 
 
@@ -392,8 +412,7 @@ modo = st.radio("Escena Sentinel-2", ["Usar escena de ejemplo", "Subir GeoTIFF"]
 path, t0, spec_override, scene_err = None, None, None, None
 
 if modo == "Usar escena de ejemplo":
-    with st.spinner("Evaluando calidad de las escenas disponibles..."):
-        ranked = rank_scenes_by_quality(wb)          # (fecha, ruta, score) mejor primero
+    ranked = rank_scenes_with_progress(wb)           # (fecha, ruta, score) mejor primero; barra de avance
     if not ranked:
         scene_err = f"No hay escenas Sentinel-2 de ejemplo para {NICE.get(wb, wb)}."
     else:
@@ -408,7 +427,7 @@ if modo == "Usar escena de ejemplo":
             # dropdown ORDENADO por calidad (mejor primero); la mejor se marca con estrella
             fechas = [f for f, _, _ in ranked]
             marca = {best_fecha: f"{best_fecha}  ⭐ mejor (agua mas limpia)"}
-            sel = st.selectbox(f"Escena disponible ({len(ranked)} fechas, ordenadas por calidad)",
+            sel = st.selectbox(f"Escena disponible ({len(ranked)} mas recientes, ordenadas por calidad)",
                                fechas, format_func=lambda f: marca.get(f, f))
             rec = next(r for r in ranked if r[0] == sel)
             path, sel_score = rec[1], rec[2]
