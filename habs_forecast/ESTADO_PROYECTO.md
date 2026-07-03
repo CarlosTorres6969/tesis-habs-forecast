@@ -367,8 +367,11 @@ Figuras, notebook limpio que reemplace los viejos, redacción de tesis.
 - `build_validation_figs.py` — figuras de validación (skill, intervalos, serie temporal, dispersión).
 - `compute_metrics.py` — RMSE y R² (test intacto, log y µg/L) → `rmse_r2_metrics.csv`.
 - `validate_insitu_model.py` — validación del modelo vs verdad de campo in-situ (ancla r=0.67) → `fig_insitu_*`.
-- `experiment_zonify_okeechobee.py` — experimento (NO adoptado): zonificar Okeechobee; el cuello es
-  la resolución del target, no la agregación. Salida en `artifacts/experiments/zonify/`.
+- `experiments/` — módulos experimentales (NO usados por el sistema; evidencia de rigor): comparación
+  de arquitecturas (`compare_models.py`, `compare_lstm.py`), tuning (`tune_xgb.py`), pooling de costa
+  (`improve_coast.py`), zonificación de Okeechobee NO adoptada (`experiment_zonify_okeechobee.py`;
+  el cuello es la resolución del target, no la agregación) y `analyze_importance.py` (superado por SHAP).
+  Ver `experiments/README.md`. Correr con `PYTHONPATH=. python experiments/<x>.py` desde `habs_forecast/`.
 - **Capa operativa de alerta** (2026-06-26):
   - `guards.py` — guardas de frescura/cobertura/estado → etiqueta de `confianza`.
   - `run_forecast.py` — bucle operativo (emite + bitácora `forecast_log.csv`); `--backfill K` siembra histórico.
