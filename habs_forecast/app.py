@@ -21,6 +21,7 @@ import joblib
 import torch
 import streamlit as st
 import streamlit.components.v1 as components
+import plotly.graph_objects as go
 import config as C
 from predict import forecast_body, GROUP, SPEC, MODELS
 from make_maps import build_map_figure, _scene_pixels, KEY2FOLDER, _clear_water_score
@@ -40,6 +41,126 @@ PAIS_ES = {"USA": "Estados Unidos", "HND": "Honduras"}
 DISCLAIMER = ("⚠️ **Proxy de biomasa algal (clorofila-a).** NO confirma toxicidad ni floracion "
               "nociva. Herramienta de **alerta temprana**; requiere **verificacion de campo** "
               "(identificacion de cianobacterias, toxinas).")
+
+# Colores por nivel biologico (consistentes en toda la app: curva, medidor, marcadores)
+LEVEL_COLOR = {"floracion": "#d64545", "elevada": "#e0a800", "normal": "#2fb37f"}
+LEVEL_LABEL = {"floracion": "Floracion", "elevada": "Biomasa elevada", "normal": "Normal"}
+
+# Nombres legibles de las variables del modelo (para el panel "¿por que?" SHAP)
+FEATURE_ES = {
+    "log_chl_t0": "Clorofila actual (t0)", "chl_roll7": "Clorofila media 7 dias",
+    "chl_lag3": "Clorofila hace 3 dias", "chl_lag7": "Clorofila hace 7 dias",
+    "chl_trend7": "Tendencia de clorofila 7 dias",
+    "NDCI": "Indice de clorofila (NDCI)", "CI_red": "Indice de cianobacterias (CI)",
+    "FAI": "Indice de algas flotantes (FAI)", "turbidity": "Turbidez (satelite)",
+    "B2": "Reflectancia azul (B2)", "B3": "Reflectancia verde (B3)",
+    "B4": "Reflectancia roja (B4)", "B5": "Red-edge (B5)", "B8": "Infrarrojo cercano (B8)",
+    "temp_air_2m": "Temperatura del aire", "temp_air_2m_roll7": "Temp. aire media 7 dias",
+    "solar_radiation": "Radiacion solar", "solar_radiation_roll7": "Radiacion solar media 7 dias",
+    "precipitation": "Precipitacion", "precipitation_roll7": "Precipitacion media 7 dias",
+    "wind_speed_10m": "Viento a 10 m", "wind_speed_10m_roll7": "Viento medio 7 dias",
+    "surface_pressure": "Presion superficial",
+    "tp_context": "Fosforo total (in-situ)", "ammonia": "Amonio (in-situ)",
+    "water_temp": "Temperatura del agua (in-situ)", "do_mgl": "Oxigeno disuelto (in-situ)",
+    "ph": "pH (in-situ)", "turbidity_insitu": "Turbidez (in-situ)",
+    "spec_cond": "Conductividad (in-situ)", "secchi": "Transparencia Secchi (in-situ)",
+}
+
+
+def _feat_es(f):
+    return FEATURE_ES.get(f, f)
+
+
+@st.cache_data(show_spinner=False)
+def load_shap():
+    """Importancia SHAP por (grupo, horizonte) precomputada por explain_model.py.
+    Devuelve DataFrame o None si aun no se ha corrido la explicabilidad."""
+    p = os.path.join(C.DIR_REPORTS, "shap_importance.csv")
+    if not os.path.exists(p):
+        return None
+    return pd.read_csv(p)
+
+
+def trajectory_figure(fc, sel_h):
+    """Curva interactiva de clorofila prevista a +1/+3/+5/+7 d con banda P10-P90 sombreada,
+    marcadores coloreados por nivel y lineas de umbral. Todo el dato ya viene en fc['horizons']."""
+    hs = sorted(fc["horizons"], key=lambda x: x["horizon"])
+    xs = [f"+{x['horizon']} d" for x in hs]
+    y = [x["chl_pred"] for x in hs]
+    lo = [x["p10"] if x["p10"] is not None else x["chl_pred"] for x in hs]
+    hi = [x["p90"] if x["p90"] is not None else x["chl_pred"] for x in hs]
+    colors = [LEVEL_COLOR.get(x["nivel"], "#0fa3a3") for x in hs]
+    sizes = [20 if x["horizon"] == sel_h else 12 for x in hs]
+    cdata = [[x["p10"] or 0, x["p90"] or 0, x["prob_riesgo"] * 100, LEVEL_LABEL.get(x["nivel"], "")]
+             for x in hs]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=xs + xs[::-1], y=hi + lo[::-1], fill="toself",
+                             fillcolor="rgba(15,163,163,.16)", line=dict(color="rgba(0,0,0,0)"),
+                             hoverinfo="skip", name="Banda P10–P90"))
+    fig.add_trace(go.Scatter(x=xs, y=y, mode="lines+markers+text",
+                             line=dict(color="#0a6b6b", width=3),
+                             marker=dict(size=sizes, color=colors, line=dict(color="white", width=2)),
+                             text=[f"{v:.0f}" for v in y], textposition="top center",
+                             textfont=dict(size=12, color="#0a6b6b"),
+                             customdata=cdata,
+                             hovertemplate="<b>%{x}</b><br>Clorofila: %{y:.1f} µg/L<br>"
+                             "Banda: %{customdata[0]:.1f}–%{customdata[1]:.1f} µg/L<br>"
+                             "Prob. anomalia: %{customdata[2]:.0f}%<br>"
+                             "Nivel: %{customdata[3]}<extra></extra>",
+                             name="Clorofila prevista"))
+    fig.add_hline(y=fc["thr_floracion"], line=dict(color="#d64545", dash="dash", width=1.4),
+                  annotation_text="Floracion", annotation_position="top left")
+    fig.add_hline(y=fc["thr_elevada"], line=dict(color="#e0a800", dash="dot", width=1.4),
+                  annotation_text="Biomasa elevada", annotation_position="bottom left")
+    fig.update_layout(height=380, margin=dict(l=10, r=10, t=34, b=10),
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,.55)",
+                      yaxis_title="Clorofila-a prevista (µg/L)", xaxis_title="Horizonte de pronostico",
+                      legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+                      font=dict(family="Segoe UI"), hovermode="x unified")
+    return fig
+
+
+def gauge_figure(prob, thr, nivel):
+    """Medidor (gauge) animado de la probabilidad de anomalia, con el umbral operativo REAL
+    (calibrado) marcado. La aguja anima de 0 al valor al renderizar."""
+    val, thrp = prob * 100.0, thr * 100.0
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number+delta", value=val,
+        number={"suffix": "%", "font": {"size": 42, "color": "#0a6b6b"}},
+        delta={"reference": thrp, "increasing": {"color": "#d64545"},
+               "decreasing": {"color": "#2fb37f"}, "suffix": " pts vs umbral"},
+        title={"text": "Probabilidad de anomalia (P85)", "font": {"size": 15}},
+        gauge={"axis": {"range": [0, max(100.0, val * 1.1)]},
+               "bar": {"color": LEVEL_COLOR.get(nivel, "#0fa3a3")},
+               "bgcolor": "rgba(255,255,255,.4)",
+               "steps": [{"range": [0, thrp], "color": "rgba(46,179,127,.25)"},
+                         {"range": [thrp, max(100.0, val * 1.1)], "color": "rgba(214,69,69,.16)"}],
+               "threshold": {"line": {"color": "#d64545", "width": 4}, "thickness": 0.85,
+                             "value": thrp}}))
+    fig.update_layout(height=300, margin=dict(l=24, r=24, t=56, b=8),
+                      paper_bgcolor="rgba(0,0,0,0)", font=dict(family="Segoe UI"))
+    return fig
+
+
+def shap_bar_figure(group, h, topn=8):
+    """Barras horizontales de las variables que MAS mueven la prediccion de este grupo+horizonte
+    (media |SHAP| precomputada). Devuelve None si no hay explicabilidad calculada aun."""
+    d = load_shap()
+    if d is None:
+        return None
+    sub = d[(d["group"] == group) & (d["horizon"] == h)].nsmallest(topn, "rank")
+    if sub.empty:
+        return None
+    sub = sub.sort_values("mean_abs_shap")
+    labels = [_feat_es(f) for f in sub["feature"]]
+    fig = go.Figure(go.Bar(x=sub["mean_abs_shap"], y=labels, orientation="h",
+                           marker=dict(color=sub["mean_abs_shap"], colorscale="Teal",
+                                       line=dict(color="rgba(10,107,107,.5)", width=1)),
+                           hovertemplate="<b>%{y}</b><br>Peso: %{x:.3f}<extra></extra>"))
+    fig.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10),
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,.55)",
+                      xaxis_title="Influencia media (|SHAP|)", font=dict(family="Segoe UI"))
+    return fig
 
 # --------------------------------------------------------------------------------------
 # Tema visual (acuatico) — CSS + encabezado "hero". Solo presentacion, no toca la logica.
@@ -386,6 +507,38 @@ if st.button("🔍 Analizar", type="primary", disabled=disabled):
                      if hh["p10"] is not None else "banda no disponible")
             st.metric(f"clorofila-a media prevista (+{h} d)", f"{hh['chl_pred']:.1f} µg/L")
             st.caption(f"Banda de incertidumbre calibrada (CQR ~80%) · {banda}")
+
+    # ELEMENTOS DINAMICOS: trayectoria 0-7 d, medidor de riesgo y "¿por que?" (SHAP).
+    # Todo reutiliza datos ya calculados (fc["horizons"], shap_importance.csv); no reentrena nada.
+    st.divider()
+    tab_tray, tab_gauge, tab_why = st.tabs(
+        ["📈 Trayectoria 0–7 días", "🎯 Medidor de riesgo", "🧠 ¿Por qué? (SHAP)"])
+    with tab_tray:
+        st.plotly_chart(trajectory_figure(fc, h), use_container_width=True,
+                        config={"displayModeBar": False})
+        st.caption("Clorofila-a prevista en cada horizonte con su banda P10–P90 (CQR ~80%). "
+                   "El punto grande es el horizonte seleccionado; el color indica el nivel "
+                   "(verde normal · amarillo elevada · rojo floración). Pasa el cursor para ver detalle.")
+    with tab_gauge:
+        if hh is not None:
+            st.plotly_chart(gauge_figure(hh["prob_riesgo"], fc["alert_threshold"], hh["nivel"]),
+                            use_container_width=True, config={"displayModeBar": False})
+            st.caption(f"Probabilidad calibrada de anomalía (P85) a +{h} días. La línea roja es el "
+                       f"**umbral operativo real** ({fc['alert_threshold']*100:.0f}%): por encima, el "
+                       "sistema dispara alerta. El umbral es bajo a propósito (prioriza no perder "
+                       "eventos = recall alto, propio de una alerta temprana).")
+        else:
+            st.info("Sin probabilidad disponible para este horizonte.")
+    with tab_why:
+        figw = shap_bar_figure(GROUP[wb], h)
+        if figw is not None:
+            st.plotly_chart(figw, use_container_width=True, config={"displayModeBar": False})
+            st.caption("Variables que más pesan en el pronóstico de este grupo y horizonte "
+                       "(media |SHAP|). En corto plazo domina la clorofila reciente (autorregresivo); "
+                       "a mayor horizonte entran meteorología, nutrientes e índices espectrales. "
+                       "Respalda el diseño del modelo, no es una relación causal directa.")
+        else:
+            st.info("Explicabilidad SHAP no disponible. Genérala con `python explain_model.py`.")
 
     # ELEMENTO 5: disclaimer fijo
     st.divider()
