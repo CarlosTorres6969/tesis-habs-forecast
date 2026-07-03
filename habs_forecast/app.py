@@ -74,6 +74,37 @@ def _feat_es(f):
 
 
 @st.cache_data(show_spinner=False)
+def load_nested_metrics():
+    """Metricas de validacion ANIDADA (test intacto) por grupo->horizonte: skill vs persistencia
+    con IC95% bootstrap. Producidas por evaluate_nested.py. Devuelve dict o None."""
+    p = os.path.join(C.DIR_REPORTS, "nested_metrics.json")
+    if not os.path.exists(p):
+        return None
+    import json
+    with open(p, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def render_skill_badge(group, h):
+    """Insignia de credibilidad: skill validado vs persistencia (test nunca tocado) para el
+    grupo+horizonte, honesta con el IC95% (verde si excluye 0, ambar si es no concluyente)."""
+    d = load_nested_metrics()
+    node = (d or {}).get(group, {}).get(str(h))
+    if not node or "skill_nested" not in node:
+        return
+    pt, lo, hi = node["skill_nested"]
+    n, pos = node.get("n_test", "?"), node.get("pos_test", "?")
+    base = (f"skill vs persistencia **{pt:+.2f}**  ·  IC95% [{lo:+.2f}, {hi:+.2f}]  ·  "
+            f"a +{h} días  ·  test intacto (n={n}, eventos={pos})")
+    if lo > 0:
+        st.success(f"🏅 **Validación externa — el modelo SUPERA a la persistencia:** {base}  ·  "
+                   f"**significativo** (IC95% > 0).")
+    else:
+        st.warning(f"🏅 **Validación externa (honesta):** {base}  ·  **no concluyente** "
+                   f"(el IC95% cruza 0; datos limitados en este horizonte).")
+
+
+@st.cache_data(show_spinner=False)
 def load_shap():
     """Importancia SHAP por (grupo, horizonte) precomputada por explain_model.py.
     Devuelve DataFrame o None si aun no se ha corrido la explicabilidad."""
@@ -166,21 +197,26 @@ def shap_bar_figure(group, h, topn=8):
 
 
 def forecast_animation_gif(wb, path, t0, res, horizons=(1, 3, 5, 7), dpi=82, width=1040,
-                           steps=7, trans_ms=65, hold_ms=460):
-    """Genera un GIF que se reproduce solo (estilo pronostico del clima en TV): recorre los mapas
-    de biomasa prevista a +1/+3/+5/+7 dias sobre la MISMA escena. Para que sea FLUIDO interpola
-    (cross-fade) cuadros intermedios entre horizontes con Pillow y cierra el bucle de forma
-    continua; el modelo solo se evalua en los 4 horizontes reales (sin tocar modelado). 'steps' =
-    cuadros de transicion por tramo; pausa 'hold_ms' en cada dia y 'trans_ms' en la disolvencia.
-    Devuelve bytes del GIF o None si no se pudo generar ningun cuadro clave."""
+                           steps=7, trans_ms=65, hold_ms=460, nowcast_level=None):
+    """Genera un GIF que se reproduce solo (estilo pronostico del clima en TV): opcionalmente parte
+    del estado de HOY (observado) y recorre los mapas de biomasa prevista a +1/+3/+5/+7 dias sobre
+    la MISMA escena. Para que sea FLUIDO interpola (cross-fade) cuadros intermedios entre horizontes
+    con Pillow y cierra el bucle de forma continua; el modelo solo se evalua en los horizontes
+    reales (sin tocar modelado). 'steps' = cuadros de transicion por tramo; pausa 'hold_ms' en cada
+    dia y 'trans_ms' en la disolvencia. Devuelve bytes del GIF o None si no se pudo generar cuadros.
+    Si nowcast_level se pasa, el primer cuadro es 'Hoy (observado)' con ese nivel de clorofila."""
     keys = []
-    for hh in horizons:
+    # cuadro "Hoy" (observado) al inicio, si se pide
+    specs = ([("nowcast", horizons[0])] if nowcast_level is not None else []) + \
+            [("fc", hh) for hh in horizons]
+    for kind, hh in specs:
         if (GROUP[wb], hh) not in res["bundles"]:
             continue
         try:
-            fig, _ = build_map_figure(wb, hh, path, t0, res=res, gradient_focus=True)
+            nl = nowcast_level if kind == "nowcast" else None
+            fig, _ = build_map_figure(wb, hh, path, t0, res=res, gradient_focus=True, nowcast_level=nl)
         except Exception as e:
-            log.warning("frame +%dd fallo: %s", hh, e)
+            log.warning("frame %s +%dd fallo: %s", kind, hh, e)
             continue
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=dpi)      # figsize fijo -> cuadros clave del mismo tamaño
@@ -561,25 +597,32 @@ if st.button("🔍 Analizar", type="primary", disabled=disabled):
 
     # ELEMENTOS 1 y 2: imagen satelital real + mapa de biomasa prevista (2 paneles, estilo make_maps)
     # dpi=200 + bbox tight: misma nitidez que los PNG del CLI (no el ~100 dpi por defecto de Streamlit).
+    _mbuf = io.BytesIO()                                   # capturar PNG ANTES de st.pyplot (por si lo cierra)
+    fig.savefig(_mbuf, format="png", dpi=200, bbox_inches="tight")
+    st.session_state["map_png"] = _mbuf.getvalue()
     st.pyplot(fig, use_container_width=True, dpi=200, bbox_inches="tight")
+
+    # INSIGNIA de credibilidad: skill validado vs persistencia (test intacto) del horizonte elegido.
+    render_skill_badge(GROUP[wb], h)
 
     # ANIMACION tipo pronostico del clima (opcional): recorre +1/+3/+5/+7 d como un video.
     # Cacheada por escena en session_state -> no se regenera al cambiar de horizonte o pestaña.
     if animate:
         sig = f"{wb}|{path}|{fc['t0']}"
         if st.session_state.get("anim_sig") != sig:
-            with st.spinner("Generando animación tipo pronóstico (1 → 7 días)..."):
-                st.session_state["anim_gif"] = forecast_animation_gif(wb, path, fc["t0"], res)
+            with st.spinner("Generando animación tipo pronóstico (Hoy → 7 días)..."):
+                st.session_state["anim_gif"] = forecast_animation_gif(
+                    wb, path, fc["t0"], res, nowcast_level=fc.get("chl0"))
                 st.session_state["anim_sig"] = sig
         gif = st.session_state.get("anim_gif")
         if gif:
-            st.markdown("### 🎬 Animación del pronóstico (1 → 7 días)")
+            st.markdown("### 🎬 Animación del pronóstico (Hoy → 7 días)")
             st.image(gif, use_container_width=True)
-            st.caption("Biomasa algal prevista a 1, 3, 5 y 7 días sobre la misma escena (se reproduce "
-                       "en bucle, como un pronóstico del clima). La textura espacial viene de la "
-                       "escena actual; lo que cambia entre cuadros es el NIVEL que predice el modelo. "
-                       "A +1 y +7 días es nivel de cuerpo repartido por el patrón actual; a +3 y +5 "
-                       "el gradiente lo aporta el modelo espectral.")
+            st.caption("Arranca en el estado OBSERVADO de hoy y recorre la biomasa algal prevista a "
+                       "1, 3, 5 y 7 días sobre la misma escena (se reproduce en bucle, como un "
+                       "pronóstico del clima). La textura espacial viene de la escena actual; lo que "
+                       "cambia entre cuadros es el NIVEL. A +1 y +7 días es nivel de cuerpo repartido "
+                       "por el patrón actual; a +3 y +5 el gradiente lo aporta el modelo espectral.")
         else:
             st.info("No se pudo generar la animación para esta escena.")
 
@@ -638,6 +681,37 @@ if st.button("🔍 Analizar", type="primary", disabled=disabled):
                        "Respalda el diseño del modelo, no es una relación causal directa.")
         else:
             st.info("Explicabilidad SHAP no disponible. Genérala con `python explain_model.py`.")
+
+    # DESCARGAS: mapa PNG, animacion GIF (si se genero) y resumen CSV del pronostico.
+    st.divider()
+    st.markdown("### 💾 Descargas")
+    # resumen CSV desde fc (todos los horizontes)
+    _rows = ["horizonte_dias,chl_pred_ugL,p10_ugL,p90_ugL,prob_alerta,nivel"]
+    for x in sorted(fc["horizons"], key=lambda z: z["horizon"]):
+        _rows.append(f"{x['horizon']},{x['chl_pred']:.2f},"
+                     f"{'' if x['p10'] is None else round(x['p10'],2)},"
+                     f"{'' if x['p90'] is None else round(x['p90'],2)},"
+                     f"{x['prob_riesgo']:.4f},{LEVEL_LABEL.get(x['nivel'], x['nivel'])}")
+    _csv = ("# Pronostico de biomasa algal (clorofila-a) - NO confirma toxicidad; requiere "
+            "verificacion de campo\n"
+            f"# cuerpo={wb} grupo={GROUP[wb]} escena_t0={fc['t0'].date()} "
+            f"chl_actual_ugL={fc.get('chl0', float('nan')):.2f} "
+            f"umbral_floracion_ugL={fc['thr_floracion']:.1f}\n" + "\n".join(_rows))
+    dc1, dc2, dc3 = st.columns(3)
+    with dc1:
+        st.download_button("🖼️ Mapa (PNG)", st.session_state.get("map_png", b""),
+                           file_name=f"mapa_{wb}_h{h}_{fc['t0'].date()}.png", mime="image/png",
+                           disabled=not st.session_state.get("map_png"), use_container_width=True)
+    with dc2:
+        _gif = st.session_state.get("anim_gif") if animate else None
+        st.download_button("🎬 Animación (GIF)", _gif or b"",
+                           file_name=f"animacion_{wb}_{fc['t0'].date()}.gif", mime="image/gif",
+                           disabled=not _gif, use_container_width=True,
+                           help=None if _gif else "Marca la casilla de animación y vuelve a Analizar.")
+    with dc3:
+        st.download_button("📄 Pronóstico (CSV)", _csv.encode("utf-8"),
+                           file_name=f"pronostico_{wb}_{fc['t0'].date()}.csv", mime="text/csv",
+                           use_container_width=True)
 
     # ELEMENTO 5: disclaimer fijo
     st.divider()

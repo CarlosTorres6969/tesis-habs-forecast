@@ -13,6 +13,7 @@ Salida: artifacts/reports/mapa_{cuerpo}_h{h}.png
 """
 from __future__ import annotations
 import os, sys, glob, joblib
+from functools import lru_cache
 import numpy as np
 import pandas as pd
 import rasterio
@@ -65,7 +66,40 @@ def _clean_mask(water, min_frac=0.02, min_abs=20):
     return ndimage.binary_fill_holes(mask)         # cobertura continua del cuerpo
 
 
+@lru_cache(maxsize=48)
+def _scene_pixels_cached(path, _mtime):
+    return _scene_pixels_impl(path)
+
+
+_PATTERN_CACHE = {}
+
+
+def _spatial_pattern_memo(group, path, t0, feats2d, water, body_row, res):
+    """Cache del patron espacial por (grupo, escena, t0): es IDENTICO para todos los horizontes de
+    una misma escena, asi la animacion 1->7d no lo recomputa 4 veces (~1.4s c/u). Devuelve el mismo
+    array (o None) que _spatial_pattern."""
+    key = (group, path, str(t0))
+    pat = _PATTERN_CACHE.get(key, False)                 # False = aun no calculado (None es valido)
+    if pat is False:
+        pat = _spatial_pattern(group, feats2d, water, body_row, res)
+        if len(_PATTERN_CACHE) > 64:
+            _PATTERN_CACHE.clear()
+        _PATTERN_CACHE[key] = pat
+    return pat
+
+
 def _scene_pixels(path):
+    """Lectura de escena CACHEADA por (ruta, mtime): la misma escena se lee UNA sola vez aunque
+    build_map_figure se invoque para varios horizontes (p.ej. la animacion 1->7d, que antes leia
+    el raster 4 veces). Los resultados son de solo-lectura; no mutar feats2d/water."""
+    try:
+        mt = os.path.getmtime(path)
+    except OSError:
+        mt = 0.0
+    return _scene_pixels_cached(path, mt)
+
+
+def _scene_pixels_impl(path):
     """Lee la escena y devuelve features espectrales por pixel de agua + mascara 2D."""
     with rasterio.open(path) as ds:
         arr = ds.read().astype("float32")          # (5, H, W)
@@ -152,7 +186,8 @@ def _spatial_pattern(group, feats2d, water, body_row, res):
     return None
 
 
-def build_map_figure(wb, h, path, t0, res=None, gradient_focus=False, focus_water=False):
+def build_map_figure(wb, h, path, t0, res=None, gradient_focus=False, focus_water=False,
+                     nowcast_level=None):
     """Construye la figura de 2 paneles (1: satelital real; 2: biomasa algal prevista a +h d)
     para una escena Sentinel-2 dada. REUTILIZADA por make_map (CLI -> PNG) y por app.py
     (Streamlit -> st.pyplot); NO guarda ni cierra la figura (decide el llamador).
@@ -194,17 +229,31 @@ def build_map_figure(wb, h, path, t0, res=None, gradient_focus=False, focus_wate
 
     # INTENSIDAD de clorofila por pixel (cabeza de regresion -> varia espacialmente
     # con la senal espectral). Mapea la distribucion espacial del bloom.
-    chl = np.expm1(bundle["reg"].predict(X))
-    chl = np.clip(chl, 0, None)
+    if has_spatial:
+        chl = np.clip(np.expm1(bundle["reg"].predict(X)), 0, None)
+    else:
+        # sin features espectrales todas las filas de X son IDENTICAS (solo constantes del cuerpo)
+        # -> predecir UNA fila da el mismo valor exacto que predecir las N (evita ~200k predicciones
+        # por cuadro; clave para que la animacion sea rapida). Resultado numericamente identico.
+        _lvl = float(np.clip(np.expm1(bundle["reg"].predict(X.iloc[[0]]))[0], 0, None))
+        chl = np.full(nwater, _lvl, dtype="float32")
     # h1/h7 (body-level) dan chl constante -> desagregar espacialmente: nivel del horizonte
     # x patron espacial ACTUAL (de un modelo espectral). El detalle es ESTIMADO, no pronostico
     # pixel-a-pixel (se etiqueta en el subtitulo del panel 2).
     spatial_mode = "model" if has_spatial else "uniform"
     if not has_spatial:
-        pattern = _spatial_pattern(group, feats2d, water, body_row, res)
+        pattern = _spatial_pattern_memo(group, path, t0, feats2d, water, body_row, res)
         if pattern is not None:
             chl = float(np.nanmean(chl)) * pattern
             spatial_mode = "downscaled"
+    # Cuadro "HOY" (observado): en vez de la prediccion del modelo, se pinta el nivel de clorofila
+    # OBSERVADO del cuerpo (fc['chl0'], de la serie satelital -> NO es la optica S2 con fuga)
+    # repartido por el patron espacial actual. Solo se activa si el llamador pasa nowcast_level.
+    if nowcast_level is not None:
+        pat = _spatial_pattern_memo(group, path, t0, feats2d, water, body_row, res)
+        chl = float(nowcast_level) * (pat if pat is not None
+                                      else np.ones(nwater, dtype="float32"))
+        spatial_mode = "nowcast"
     grid = np.full((H, W), np.nan, dtype="float32")
     grid[water] = chl
     grid_full = grid                     # referencia SIN recortar: los stats se calculan sobre TODA
@@ -341,12 +390,17 @@ def build_map_figure(wb, h, path, t0, res=None, gradient_focus=False, focus_wate
         ax[1].contour(elevf, levels=[0.5], colors="#ff9800", linewidths=lw_elev, linestyles="--", alpha=a_cont)
     if riskf.sum() > 0:
         ax[1].contour(riskf, levels=[0.5], colors="red", linewidths=lw_risk, alpha=a_cont)
+    nowcast = nowcast_level is not None
     cb = fig.colorbar(im, ax=ax[1], fraction=0.046, pad=0.04)
-    cb.set_label("Clorofila-a prevista (ug/L) — biomasa algal", fontsize=9)
+    cb.set_label(("Clorofila-a observada (ug/L) — biomasa algal" if nowcast
+                  else "Clorofila-a prevista (ug/L) — biomasa algal"), fontsize=9)
     sub = {"model":      "tierra = gris  ·  agua = gradiente de clorofila (azul menos -> rojo mas; valores en la barra)",
            "downscaled": f"tierra = gris  ·  patron espacial ESTIMADO de hoy, escalado al pronostico +{h}d",
-           "uniform":    "tierra = gris  ·  agua uniforme (horizonte body-level: sin detalle por pixel)"}[spatial_mode]
-    ax[1].set_title(f"2) Donde se espera mas biomasa algal (a +{h} dias)\n{sub}", fontsize=11)
+           "uniform":    "tierra = gris  ·  agua uniforme (horizonte body-level: sin detalle por pixel)",
+           "nowcast":    "tierra = gris  ·  nivel OBSERVADO de hoy repartido por el patron espacial estimado"}[spatial_mode]
+    titulo2 = ("2) Biomasa algal actual (hoy, observado)" if nowcast
+               else f"2) Donde se espera mas biomasa algal (a +{h} dias)")
+    ax[1].set_title(f"{titulo2}\n{sub}", fontsize=11)
     # Simbologia de color (absoluta, igual para todos los cuerpos y fechas):
     # azul = clorofila baja -> verde media -> rojo alta (floracion). Contornos = umbrales.
     leg = [Patch(facecolor="0.6", label="Tierra (gris, fuera del analisis)"),
@@ -358,8 +412,9 @@ def build_map_figure(wb, h, path, t0, res=None, gradient_focus=False, focus_wate
     ax[1].legend(handles=leg, loc="lower left", fontsize=7.5, framealpha=0.92)
     for a in ax:
         a.set_xticks([]); a.set_yticks([])
-    fig.suptitle(f"{wb.upper()} ({'lago' if group=='freshwater' else 'costa'}) — pronostico de "
-                 f"biomasa algal a +{h} dias  |  escena {t0.date() if t0 is not None else '?'}\n"
+    fig.suptitle(f"{wb.upper()} ({'lago' if group=='freshwater' else 'costa'}) — "
+                 f"{'biomasa algal de hoy (observada)' if nowcast else f'pronostico de biomasa algal a +{h} dias'}"
+                 f"  |  escena {t0.date() if t0 is not None else '?'}\n"
                  f"clorofila-a media = {chlmean:.1f} ug/L ({C.LEVEL_ES[nivel_body]})   ·   "
                  f"area en floracion (>= {thr:.0f}) = {pct_alert:.0f}%   ·   "
                  f"biomasa elevada (>= {thr_elev:.0f}) = {pct_elev:.0f}%",
