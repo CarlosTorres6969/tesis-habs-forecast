@@ -165,12 +165,15 @@ def shap_bar_figure(group, h, topn=8):
     return fig
 
 
-def forecast_animation_gif(wb, path, t0, res, horizons=(1, 3, 5, 7), dpi=95, ms_per_frame=1200):
+def forecast_animation_gif(wb, path, t0, res, horizons=(1, 3, 5, 7), dpi=82, width=1040,
+                           steps=7, trans_ms=65, hold_ms=460):
     """Genera un GIF que se reproduce solo (estilo pronostico del clima en TV): recorre los mapas
-    de biomasa prevista a +1/+3/+5/+7 dias sobre la MISMA escena. Reutiliza build_map_figure por
-    horizonte (sin tocar modelado); lo que cambia entre cuadros es el NIVEL previsto por el modelo.
-    Devuelve bytes del GIF o None si no se pudo generar ningun cuadro."""
-    frames = []
+    de biomasa prevista a +1/+3/+5/+7 dias sobre la MISMA escena. Para que sea FLUIDO interpola
+    (cross-fade) cuadros intermedios entre horizontes con Pillow y cierra el bucle de forma
+    continua; el modelo solo se evalua en los 4 horizontes reales (sin tocar modelado). 'steps' =
+    cuadros de transicion por tramo; pausa 'hold_ms' en cada dia y 'trans_ms' en la disolvencia.
+    Devuelve bytes del GIF o None si no se pudo generar ningun cuadro clave."""
+    keys = []
     for hh in horizons:
         if (GROUP[wb], hh) not in res["bundles"]:
             continue
@@ -179,20 +182,39 @@ def forecast_animation_gif(wb, path, t0, res, horizons=(1, 3, 5, 7), dpi=95, ms_
         except Exception as e:
             log.warning("frame +%dd fallo: %s", hh, e)
             continue
-        fig.suptitle(f"Pronostico de biomasa algal  ·  +{hh} dias", fontsize=17,
-                     fontweight="bold", color="#0a6b6b", y=0.99)
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=dpi)      # figsize fijo -> cuadros del mismo tamaño
+        fig.savefig(buf, format="png", dpi=dpi)      # figsize fijo -> cuadros clave del mismo tamaño
         plt.close(fig)
         buf.seek(0)
-        frames.append(Image.open(buf).convert("RGB"))
-    if not frames:
+        im = Image.open(buf).convert("RGB")
+        if width and im.width != width:               # aligerar para que el GIF no pese de mas
+            im = im.resize((width, round(im.height * width / im.width)))
+        keys.append(im)
+    if not keys:
         return None
-    size = frames[0].size
-    frames = [f if f.size == size else f.resize(size) for f in frames]
+    size = keys[0].size
+    keys = [k if k.size == size else k.resize(size) for k in keys]
+
+    frames, durs = [], []
+    def _add(img, ms):
+        frames.append(img)
+        durs.append(ms)
+
+    if len(keys) == 1:
+        _add(keys[0], hold_ms)
+    else:
+        for i in range(len(keys) - 1):                # pausa en el dia i, luego disuelve al i+1
+            a, b = keys[i], keys[i + 1]
+            _add(a, hold_ms)
+            for k in range(1, steps + 1):
+                _add(Image.blend(a, b, k / (steps + 1)), trans_ms)
+        _add(keys[-1], hold_ms)                        # pausa en el ultimo dia
+        for k in range(1, steps + 1):                  # cierre continuo: ultimo -> primero
+            _add(Image.blend(keys[-1], keys[0], k / (steps + 1)), trans_ms)
+
     out = io.BytesIO()
     frames[0].save(out, format="GIF", save_all=True, append_images=frames[1:],
-                   duration=ms_per_frame, loop=0, disposal=2)
+                   duration=durs, loop=0, disposal=2, optimize=True)
     return out.getvalue()
 
 # --------------------------------------------------------------------------------------
