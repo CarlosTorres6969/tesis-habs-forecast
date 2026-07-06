@@ -37,10 +37,9 @@ def _scene_features(path: str, landsat: bool = False):
         if arr.shape[0] < 4:
             return None
         B2, B3, B4, B8 = arr[0], arr[1], arr[2], arr[3]
-        ndwi = (B3 - B8) / (B3 + B8 + eps)
-        ndvi = (B8 - B4) / (B8 + B4 + eps)
-        valid = (B2 > 0) & (B3 > 0) & (B4 > 0) & (B8 > 0)
-        water = valid & (ndwi > C.NDWI_MIN) & (ndvi < C.NDVI_MAX)
+        # Landsat no tiene red-edge (B5); reusar B8 solo para satisfacer la firma de
+        # water_mask (el rechazo de nube usa el visible B2/B3/B4, no B5).
+        water = C.water_mask(B2, B3, B4, B8, B8)
         n = int(water.sum())
         if n < C.MIN_WATER_PIXELS:
             return None
@@ -61,10 +60,7 @@ def _scene_features(path: str, landsat: bool = False):
     if np.nanmax(arr) > C.BAND_SCALE_THRESHOLD:
         B2, B3, B4, B5, B8 = (b / 10000.0 for b in (B2, B3, B4, B5, B8))
 
-    ndwi = (B3 - B8) / (B3 + B8 + eps)
-    ndvi = (B8 - B4) / (B8 + B4 + eps)
-    valid = (B2 > 0) & (B3 > 0) & (B4 > 0) & (B5 > 0) & (B8 > 0)
-    water = valid & (ndwi > C.NDWI_MIN) & (ndvi < C.NDVI_MAX)
+    water = C.water_mask(B2, B3, B4, B5, B8)
     n = int(water.sum())
     if n < C.MIN_WATER_PIXELS:
         return None

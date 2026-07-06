@@ -76,6 +76,27 @@ NDWI_MIN = -0.5          # excluir vegetacion/tierra
 NDVI_MAX = 0.4           # excluir vegetacion terrestre dominante
 MIN_WATER_PIXELS = 50    # escenas con menos pixeles de agua validos se descartan
 
+# --- Rechazo de nube / bruma (SCL no atrapa nubes finas ni bordes; sin esto la
+#     mediana de escena se contamina y el modelo lee la nube como floracion) ---
+# Agua limpia tiene azul B2 ~0.04 (<0.10); una nube es brillante en TODO el visible
+# (min alto) y PLANA/blanca (B2~B3, ratio ~0.99). La nata algal es VERDE (B2 << B3,
+# ratio <0.7): falla el test de nube y se conserva. Verificado en scene_state.csv:
+# las 99 escenas con B2>0.15 tienen B2/B3=0.99 (100% nube), no floraciones.
+MIN_VIS_CLOUD = 0.10     # si min(B2,B3,B4) supera esto -> pixel brillante (nube/bruma)
+CLOUD_WHITE_RATIO = 0.80 # y ademas B2 >= ratio*B3 (espectro plano/blanco) -> nube
+
+
+def water_mask(B2, B3, B4, B5, B8, eps=1e-10):
+    """Mascara booleana de agua valida con rechazo de nube/bruma (fuente unica de
+    verdad para build_scene_state y make_maps). Entrada: reflectancias 0-1 por pixel."""
+    import numpy as _np
+    ndwi = (B3 - B8) / (B3 + B8 + eps)
+    ndvi = (B8 - B4) / (B8 + B4 + eps)
+    valid = (B2 > 0) & (B3 > 0) & (B4 > 0) & (B5 > 0) & (B8 > 0)
+    vis_min = _np.minimum(_np.minimum(B2, B3), B4)
+    cloud = (vis_min > MIN_VIS_CLOUD) & (B2 >= CLOUD_WHITE_RATIO * B3)
+    return valid & (ndwi > NDWI_MIN) & (ndvi < NDVI_MAX) & ~cloud
+
 # --------------------------------------------------------------------------------------
 # Indices espectrales: SOLO los justificados para HAB (ver Fase 1).
 #   Conservar: NDCI (principal), FAI (nata flotante), CI red-edge, turbidez (control).

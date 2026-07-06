@@ -9,10 +9,10 @@
 | cajon | freshwater | 342 | 315 |
 | fonseca | marine | 269 | 1046 |
 | okeechobee | freshwater | 509 | 1726 |
-| tampa_bay | marine | 217 | 923 |
-| yojoa | freshwater | 188 | 395 |
+| tampa_bay | marine | 216 | 919 |
+| yojoa | freshwater | 187 | 395 |
 
-Total: **1525 escenas**, **4405 pares**.
+Total: **1523 escenas**, **4401 pares**.
 
 ## 2. Validación anidada (TEST FINAL INTACTO) — el número defendible
 
@@ -21,20 +21,20 @@ Test = último ~25% del tiempo por (grupo,horizonte), nunca tocado; features ele
 ### Lagos
 | Horizonte | Skill regresión (test intacto) | PR-AUC alerta | n_test | eventos | Familias |
 |---|---|---|---|---|---|
-| +1d | +0.23 [+0.14,+0.31]* | +0.57 [+0.25,+0.88]* | 121 | 8 | AUTOREG+ERA5 |
-| +3d | +0.09 [-0.03,+0.21]  | +0.20 [+0.09,+0.39]* | 112 | 11 | AUTOREG+INSITU |
+| +1d | +0.23 [+0.14,+0.31]* | +0.47 [+0.21,+0.79]* | 121 | 8 | AUTOREG+ERA5 |
+| +3d | +0.09 [-0.03,+0.21]  | +0.22 [+0.09,+0.41]* | 112 | 11 | AUTOREG+INSITU |
 | +5d | +0.14 [+0.08,+0.20]* | +0.06 [+0.02,+0.11]* | 109 | 6 | AUTOREG+ERA5+INSITU |
-| +7d | +0.24 [+0.14,+0.32]* | +0.08 [+0.03,+0.20]* | 108 | 6 | AUTOREG+ERA5+INSITU |
+| +7d | +0.24 [+0.14,+0.32]* | +0.08 [+0.03,+0.14]* | 108 | 6 | AUTOREG+ERA5+INSITU |
 
 Cuerpos en el test: cajon, okeechobee, yojoa.
 
 ### Costa
 | Horizonte | Skill regresión (test intacto) | PR-AUC alerta | n_test | eventos | Familias |
 |---|---|---|---|---|---|
-| +1d | +0.23 [+0.00,+0.44]* | +0.37 [+0.11,+0.60]* | 98 | 13 | AUTOREG |
-| +3d | +0.33 [+0.11,+0.50]* | +0.27 [+0.09,+0.52]* | 96 | 10 | AUTOREG+SPECTRAL+INSITU |
-| +5d | +0.30 [+0.08,+0.49]* | +0.10 [+0.06,+0.18]* | 99 | 12 | AUTOREG+SPECTRAL |
-| +7d | +0.26 [-0.08,+0.50]  | +0.32 [+0.13,+0.55]* | 96 | 13 | AUTOREG |
+| +1d | +0.21 [-0.01,+0.43]  | +0.36 [+0.12,+0.59]* | 98 | 13 | AUTOREG |
+| +3d | +0.32 [+0.12,+0.49]* | +0.14 [+0.08,+0.23]* | 96 | 10 | AUTOREG+ERA5+SPECTRAL+INSITU |
+| +5d | +0.29 [+0.06,+0.49]* | +0.16 [+0.07,+0.30]* | 99 | 12 | AUTOREG |
+| +7d | +0.31 [-0.02,+0.54]  | +0.30 [+0.11,+0.53]* | 96 | 13 | AUTOREG |
 
 Cuerpos en el test: fonseca, tampa_bay.
 
@@ -45,7 +45,7 @@ Cada pronóstico de intensidad lleva una banda **P10–P90** calibrada en el tes
 | Grupo | +1d | +3d | +5d | +7d |
 |---|---|---|---|---|
 | Lagos | 0.65 | 0.89 | 0.72 | 0.69 |
-| Costa | 0.78 | 0.82 | 0.83 | 0.80 |
+| Costa | 0.85 | 0.82 | 0.77 | 0.82 |
 
 Cobertura ≈0.80 ⇒ intervalos fiables (no sobreconfiados). La banda cruda sin conformalizar quedaba en ~0.45–0.61 (sobreconfiada); CQR la corrige.
 
@@ -55,14 +55,14 @@ Ablación (aporte real de ERA5) y estrés de ruido (skill con ruido al 100% de l
 
 | Grupo | Horiz | Skill con ERA5 | Aporte ERA5 | Skill con ruido 100% |
 |---|---|---|---|---|
-| Lagos | +1d | +0.17 [+0.10,+0.23]* | -0.018 | +0.168 |
-| Lagos | +3d | +0.15 [+0.09,+0.21]* | +0.049 | +0.106 |
-| Lagos | +5d | +0.12 [+0.06,+0.18]* | -0.019 | +0.097 |
-| Lagos | +7d | +0.20 [+0.15,+0.26]* | -0.006 | +0.207 |
-| Costa | +1d | -0.01 [-0.22,+0.17]  | -0.040 | +0.002 |
-| Costa | +3d | +0.13 [-0.01,+0.27]  | -0.001 | +0.124 |
-| Costa | +5d | +0.12 [-0.01,+0.24]  | +0.023 | +0.098 |
-| Costa | +7d | +0.17 [-0.01,+0.34]  | +0.015 | +0.173 |
+| Lagos | +1d | +0.18 [+0.11,+0.24]* | -0.010 | +0.172 |
+| Lagos | +3d | +0.17 [+0.10,+0.22]* | +0.046 | +0.123 |
+| Lagos | +5d | +0.11 [+0.04,+0.17]* | -0.029 | +0.087 |
+| Lagos | +7d | +0.21 [+0.15,+0.27]* | +0.019 | +0.208 |
+| Costa | +1d | -0.01 [-0.22,+0.14]  | -0.005 | -0.030 |
+| Costa | +3d | +0.16 [+0.01,+0.29]* | -0.007 | +0.160 |
+| Costa | +5d | +0.10 [-0.03,+0.23]  | +0.002 | +0.095 |
+| Costa | +7d | +0.19 [+0.01,+0.36]* | +0.043 | +0.168 |
 
 ## 4. Validación del target de Yojoa contra in-situ (fuera de ventana, NO entra al modelo)
 

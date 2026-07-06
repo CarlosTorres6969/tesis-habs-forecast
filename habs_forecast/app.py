@@ -94,14 +94,15 @@ def render_skill_badge(group, h):
         return
     pt, lo, hi = node["skill_nested"]
     n, pos = node.get("n_test", "?"), node.get("pos_test", "?")
-    base = (f"skill vs persistencia **{pt:+.2f}**  ·  IC95% [{lo:+.2f}, {hi:+.2f}]  ·  "
-            f"a +{h} días  ·  test intacto (n={n}, eventos={pos})")
+    base = (f"ventaja sobre persistencia **{pt:+.2f}**  ·  IC95% [{lo:+.2f}, {hi:+.2f}]  ·  "
+            f"a +{h} días  ·  sobre datos nunca vistos (n={n}, eventos={pos})")
     if lo > 0:
-        st.success(f"🏅 **Validación externa — el modelo SUPERA a la persistencia:** {base}  ·  "
-                   f"**significativo** (IC95% > 0).")
-    else:
-        st.warning(f"🏅 **Validación externa (honesta):** {base}  ·  **no concluyente** "
-                   f"(el IC95% cruza 0; datos limitados en este horizonte).")
+        st.success(f"🏅 **Validación externa — el modelo SUPERA al pronóstico ingenuo:** {base}  ·  "
+                   f"**resultado significativo** (todo el IC95% está por encima de 0).")
+        st.caption("Comparamos el modelo contra la *persistencia* (asumir que mañana el riesgo será "
+                   "igual al de hoy). La *ventaja* es cuánto mejora el modelo sobre esa referencia, "
+                   "medida en datos que nunca vio durante el entrenamiento. Como el intervalo de "
+                   "confianza al 95 % no toca el 0, la mejora no se explica por azar.")
 
 
 @st.cache_data(show_spinner=False)

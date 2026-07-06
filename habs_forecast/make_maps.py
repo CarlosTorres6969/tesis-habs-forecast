@@ -40,11 +40,14 @@ BRIGHT_MAX = 0.25         # reflectancia visible media: por encima ~ nube/neblin
 
 
 def _strict_water(B2, B3, B4, B5, B8, eps=1e-10):
+    # Base: la MISMA mascara del pipeline (config.water_mask) -> mismo rechazo de nube/bruma
+    # que las features del modelo (fuente unica). Encima, estrictez extra SOLO-mapa: agua
+    # inequivoca (NDWI>0), menos vegetacion (NDVI<0.20) y tope de brillo visible.
     ndwi = (B3 - B8) / (B3 + B8 + eps)
     ndvi = (B8 - B4) / (B8 + B4 + eps)
     bright = (B2 + B3 + B4) / 3.0
-    valid = (B2 > 0) & (B3 > 0) & (B4 > 0) & (B5 > 0) & (B8 > 0)
-    return valid & (ndwi > NDWI_WATER) & (ndvi < NDVI_LAND) & (bright < BRIGHT_MAX)
+    strict = (ndwi > NDWI_WATER) & (ndvi < NDVI_LAND) & (bright < BRIGHT_MAX)
+    return C.water_mask(B2, B3, B4, B5, B8) & strict
 
 
 def _clean_mask(water, min_frac=0.02, min_abs=20):

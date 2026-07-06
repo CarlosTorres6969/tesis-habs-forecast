@@ -6,7 +6,9 @@ Por que: el cuello de botella de Yojoa/Cajon/Fonseca/Tampa es el NUMERO de escen
 -> validacion anidada robusta y, en costa, posibilidad de establecer skill.
 
 Fuente   : COPERNICUS/S2_SR_HARMONIZED (reflectancia de superficie, consistente 2023-2026).
-Nubes    : mascara por SCL (Scene Classification Layer): descarta nube/sombra/cirrus/nodata.
+Nubes    : SCL (Scene Classification Layer) + s2cloudless (COPERNICUS/S2_CLOUD_PROBABILITY,
+           prob>40%) con DILATACION de bordes 2px/120m -> capta nubes finas/bruma/halos que
+           SCL subdetecta. Ambas mascaras se aplican en cascada antes de la mediana diaria.
 Salida   : formato IDENTICO al existente -> build_scene_state.py lo recoge SIN cambios:
              imagenes/<carpeta>/<anio>/S2_<nombre>_<YYYY-MM-DD>_<idx>.tif   (bandas B2,B3,B4,B5,B8)
 Incremental: solo descarga fechas que NO existan ya en imagenes/<carpeta>/.
@@ -63,6 +65,39 @@ def _scl_mask(img):
     return img.updateMask(bad.Not())
 
 
+def _s2cloudless_mask(img, prob_threshold=40):
+    """Aplica s2cloudless (COPERNICUS/S2_CLOUD_PROBABILITY) para detectar nubes finas/bruma
+    que SCL subdetecta. Probabilidad >40% = nube. Dilatacion de 2 pixeles (120m) para captar
+    bordes de nube."""
+    import ee
+    # S2_SR_HARMONIZED y S2_CLOUD_PROBABILITY comparten el mismo system:index (id de
+    # granulo) -> se emparejan por igualdad directa (join estandar de s2cloudless).
+    scene_id = ee.String(img.get("system:index"))
+
+    # Buscar la imagen de probabilidad de nubes correspondiente
+    s2_cloudless = (ee.ImageCollection("COPERNICUS/S2_CLOUD_PROBABILITY")
+                    .filter(ee.Filter.eq("system:index", scene_id))
+                    .first())
+
+    # Degradar con elegancia: si NO existe el granulo de probabilidad (fechas/teselas
+    # de borde), no aplicar mascara adicional en vez de tronar con un ee.Image(null).
+    # Se usa una banda de probabilidad = 0 (todo despejado) para que updateMask sea inerte.
+    cloud_prob = ee.Image(
+        ee.Algorithms.If(s2_cloudless,
+                         s2_cloudless,
+                         ee.Image.constant(0).rename("probability"))
+    ).select("probability")
+    is_cloud = cloud_prob.gt(prob_threshold)
+
+    # Dilatar bordes de nube: kernel circular de 2 pixeles para captar halos/bordes
+    # difusos que contaminan la mediana (el alcance en metros depende de la escala de
+    # reproyeccion; la banda de probabilidad es 10m nativa).
+    kernel = ee.Kernel.circle(radius=2, units="pixels")
+    is_cloud_dilated = is_cloud.focal_max(kernel=kernel, iterations=1)
+
+    return img.updateMask(is_cloud_dilated.Not())
+
+
 def _download(img, region, path):
     """Descarga un GeoTIFF multibanda; sube de escala si excede el limite de getDownloadURL."""
     import ee
@@ -113,7 +148,8 @@ def main():
         idx = n_have
         ok = 0
         for d in nuevas:
-            day = coll.filter(ee.Filter.eq("d", d)).map(_scl_mask)
+            # Aplicar AMBAS mascaras: SCL (nubes obvias) + s2cloudless (nubes finas/bruma)
+            day = coll.filter(ee.Filter.eq("d", d)).map(_scl_mask).map(_s2cloudless_mask)
             img = day.median().select(BANDS)        # mosaico diario enmascarado
             year = d[:4]
             outdir = os.path.join(C.DIR_IMAGENES, folder, year)
