@@ -643,6 +643,21 @@ if st.button("🔍 Analizar", type="primary", disabled=disabled):
         st.caption(f"Area en floracion (≥ {stats['thr']:.0f} µg/L): **{stats['pct_alert']:.0f}%**  ·  "
                    f"biomasa elevada (≥ {stats['thr_elev']:.0f}): **{stats['pct_elev']:.0f}%**  ·  "
                    f"prob. anomalia (P85): {hh['prob_riesgo']*100:.0f}%")
+        # DOS señales distintas que pueden diverger de forma legitima (se explica para no confundir):
+        #  - NIVEL  = MAGNITUD de clorofila prevista vs umbral biologico (el banner de color de arriba).
+        #  - prob. anomalia = chance de un SALTO atipico para ESTE cuerpo (clasificador calibrado, P85).
+        # Un cuerpo cronicamente alto (embalse siempre con nata) puede dar NIVEL alto y prob. baja: ese
+        # nivel es SU normal, no una anomalia. Y al reves: magnitud normal con salto atipico probable.
+        if hh is not None:
+            _alerta = hh["prob_riesgo"] >= fc["alert_threshold"]
+            _alto = nivel in ("elevada", "floracion")
+            if _alto and not _alerta:
+                st.caption("ℹ️ *Nivel alto por **magnitud** de clorofila, pero **prob. de anomalía baja**: "
+                           "ese nivel es **habitual** en este cuerpo, no un salto atípico. Son medidas "
+                           "distintas — el nivel mide cuánta biomasa; la anomalía, si es inusual aquí.*")
+            elif (not _alto) and _alerta:
+                st.caption("ℹ️ *Magnitud prevista **normal**, pero el modelo marca **prob. de anomalía "
+                           "elevada** (posible cambio atípico): conviene vigilar. Son medidas distintas.*")
     with cB:
         st.markdown("**Clorofila-a prevista (intensidad)**")
         if hh is not None:
@@ -666,10 +681,13 @@ if st.button("🔍 Analizar", type="primary", disabled=disabled):
         if hh is not None:
             st.plotly_chart(gauge_figure(hh["prob_riesgo"], fc["alert_threshold"], hh["nivel"]),
                             use_container_width=True, config={"displayModeBar": False})
-            st.caption(f"Probabilidad calibrada de anomalía (P85) a +{h} días. La línea roja es el "
-                       f"**umbral operativo real** ({fc['alert_threshold']*100:.0f}%): por encima, el "
-                       "sistema dispara alerta. El umbral es bajo a propósito (prioriza no perder "
-                       "eventos = recall alto, propio de una alerta temprana).")
+            st.caption(f"Probabilidad calibrada de un **salto anómalo** de biomasa a +{h} días "
+                       "(clorofila por encima del P85 **habitual de este cuerpo**) — es **distinta** del "
+                       "nivel de magnitud del banner: un cuerpo siempre-alto puede tener nivel alto y "
+                       f"anomalía baja. La línea roja es el **umbral operativo real** "
+                       f"({fc['alert_threshold']*100:.0f}%): por encima, el sistema dispara alerta. "
+                       "El umbral es bajo a propósito (prioriza no perder eventos = recall alto, "
+                       "propio de una alerta temprana).")
         else:
             st.info("Sin probabilidad disponible para este horizonte.")
     with tab_why:
