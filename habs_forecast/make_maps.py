@@ -37,16 +37,26 @@ KEY2FOLDER = {meta["key"]: folder for folder, meta in C.REGIONS.items()}
 NDWI_WATER = 0.0          # agua abierta tiene NDWI > 0 (vs -0.5 del enmascarado del modelo)
 NDVI_LAND  = 0.20         # excluye vegetacion terrestre con mas margen
 BRIGHT_MAX = 0.25         # reflectancia visible media: por encima ~ nube/neblina/nata
+# Rechazo de nube/bruma PROTEGIDO POR VERDOR (solo-mapa): la nube fina que sobrevive al gate
+# del pipeline se pinta como biomasa (roja). La nube/bruma es BRILLANTE y espectralmente PLANA
+# (green_ratio = B3/max(B2,B4) ~ 1); la nata algal es VERDE (green_ratio > 1.1). Se excluye solo
+# lo brillante-y-NO-verde -> quita nube sin borrar floraciones reales. Verificado en escenas
+# nubosas: quita 0.4-4.5% (la nube) y conserva 57-92% de agua verde.
+HAZE_BRIGHT = 0.13        # brillo visible medio por encima del agua limpia (p99 agua <= 0.10-0.12)
+GREEN_MIN   = 1.10        # green_ratio >= esto = agua verde (nata algal) -> se PROTEGE de la mascara
 
 
 def _strict_water(B2, B3, B4, B5, B8, eps=1e-10):
     # Base: la MISMA mascara del pipeline (config.water_mask) -> mismo rechazo de nube/bruma
     # que las features del modelo (fuente unica). Encima, estrictez extra SOLO-mapa: agua
-    # inequivoca (NDWI>0), menos vegetacion (NDVI<0.20) y tope de brillo visible.
+    # inequivoca (NDWI>0), menos vegetacion (NDVI<0.20), tope de brillo visible y rechazo de
+    # nube fina protegido por verdor (no toca la nata algal verde).
     ndwi = (B3 - B8) / (B3 + B8 + eps)
     ndvi = (B8 - B4) / (B8 + B4 + eps)
     bright = (B2 + B3 + B4) / 3.0
-    strict = (ndwi > NDWI_WATER) & (ndvi < NDVI_LAND) & (bright < BRIGHT_MAX)
+    green_ratio = B3 / (np.maximum(B2, B4) + eps)
+    hazy = (bright > HAZE_BRIGHT) & (green_ratio < GREEN_MIN)   # brillante y NO verde = nube/bruma
+    strict = (ndwi > NDWI_WATER) & (ndvi < NDVI_LAND) & (bright < BRIGHT_MAX) & ~hazy
     return C.water_mask(B2, B3, B4, B5, B8) & strict
 
 
