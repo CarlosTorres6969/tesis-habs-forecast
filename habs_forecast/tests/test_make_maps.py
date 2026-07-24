@@ -17,6 +17,13 @@ import os
 
 import pytest
 
+# make_maps arrastra rasterio/matplotlib/torch (deps pesadas, ausentes en el CI minimo).
+# Igual que el resto del test, si no estan disponibles el modulo se OMITE (skip) en vez de
+# romper la coleccion de pytest.
+pytest.importorskip("rasterio")
+pytest.importorskip("matplotlib")
+pytest.importorskip("torch")
+
 import config as C
 from make_maps import KEY2FOLDER, build_map_figure, _scene_pixels
 
