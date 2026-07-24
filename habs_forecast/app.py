@@ -1,22 +1,22 @@
 """
-app.py — Interfaz Streamlit (demostracion desplegable y HONESTA) del sistema de pronostico
-temprano de riesgo de biomasa algal (clorofila-a como proxy) a 0-7 dias.
+app.py — Interfaz Streamlit (demostración desplegable y HONESTA) del sistema de pronóstico
+temprano de riesgo de biomasa algal (clorofila-a como proxy) a 0-7 días.
 
-NO implementa modelado: ENVUELVE la logica que ya existe.
-  - mapas (satelital + biomasa prevista por pixel):  make_maps.build_map_figure
+NO implementa modelado: ENVUELVE la lógica que ya existe.
+  - mapas (satelital + nivel previsto y patrón espacial heurístico): make_maps.build_map_figure
   - intensidad + banda P10-P90 + alerta calibrada:    predict.forecast_body
   - etiqueta de confianza (frescura/cobertura/estado): guards.evaluate_guards
 Solo funciona para los 5 cuerpos validados (config.REGIONS) y con escenas Sentinel-2 de 5 bandas
-(B2,B3,B4,B5,B8). Es PRONOSTICO a futuro, no deteccion sobre la misma imagen.
+(B2,B3,B4,B5,B8). Es PRONÓSTICO a futuro, no detección sobre la misma imagen.
 
 Correr (local, para la defensa):  streamlit run app.py
 """
 from __future__ import annotations
-import os, glob, re, tempfile, logging, io
+import os, glob, re, tempfile, logging, io, base64, json
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from PIL import Image
+from PIL import Image, ImageOps
 import numpy as np
 import pandas as pd
 import joblib
@@ -25,7 +25,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import plotly.graph_objects as go
 import config as C
-from predict import forecast_body, GROUP, SPEC, MODELS
+from predict import forecast_body, build_features, GROUP, SPEC, MODELS
 from make_maps import build_map_figure, _scene_pixels, KEY2FOLDER, _clear_water_score
 from train_nn import HABNet
 import guards
@@ -33,37 +33,37 @@ import guards
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("app")
 
-# Metadatos por cuerpo (nombre legible, grupo, pais) desde config.REGIONS — solo los 5 validados
+# Metadatos por cuerpo (nombre legible, grupo, país) desde config.REGIONS — solo los 5 validados
 KEY2META = {meta["key"]: {"folder": folder, "group": meta["group"], "country": meta["country"]}
             for folder, meta in C.REGIONS.items()}
-NICE = {"okeechobee": "Lago Okeechobee", "tampa_bay": "Bahia de Tampa",
-        "cajon": "Embalse El Cajon", "fonseca": "Golfo de Fonseca", "yojoa": "Lago de Yojoa"}
+NICE = {"okeechobee": "Lago Okeechobee", "tampa_bay": "Bahía de Tampa",
+        "cajon": "Embalse El Cajón", "fonseca": "Golfo de Fonseca", "yojoa": "Lago de Yojoa"}
 GRP_ES = {"freshwater": "lago / agua dulce", "marine": "costa / marino-estuarino"}
 PAIS_ES = {"USA": "Estados Unidos", "HND": "Honduras"}
-DISCLAIMER = ("⚠️ **Proxy de biomasa algal (clorofila-a).** NO confirma toxicidad ni floracion "
-              "nociva. Herramienta de **alerta temprana**; requiere **verificacion de campo** "
-              "(identificacion de cianobacterias, toxinas).")
+DISCLAIMER = ("**Proxy de biomasa algal (clorofila-a).** NO confirma toxicidad ni floración "
+              "nociva. Herramienta de **alerta temprana**; requiere **verificación de campo** "
+              "(identificación de cianobacterias, toxinas).")
 
-# Colores por nivel biologico (consistentes en toda la app: curva, medidor, marcadores)
+# Colores por nivel biológico (consistentes en toda la app: curva, medidor, marcadores)
 LEVEL_COLOR = {"floracion": "#d64545", "elevada": "#e0a800", "normal": "#2fb37f"}
-LEVEL_LABEL = {"floracion": "Floracion", "elevada": "Biomasa elevada", "normal": "Normal"}
+LEVEL_LABEL = {"floracion": "Floración", "elevada": "Biomasa elevada", "normal": "Normal"}
 
 # Nombres legibles de las variables del modelo (para el panel "¿por que?" SHAP)
 FEATURE_ES = {
-    "log_chl_t0": "Clorofila actual (t0)", "chl_roll7": "Clorofila media 7 dias",
-    "chl_lag3": "Clorofila hace 3 dias", "chl_lag7": "Clorofila hace 7 dias",
-    "chl_trend7": "Tendencia de clorofila 7 dias",
-    "NDCI": "Indice de clorofila (NDCI)", "CI_red": "Indice de cianobacterias (CI)",
-    "FAI": "Indice de algas flotantes (FAI)", "turbidity": "Turbidez (satelite)",
+    "log_chl_t0": "Clorofila actual (t0)", "chl_roll7": "Clorofila media 7 días",
+    "chl_lag3": "Clorofila hace 3 días", "chl_lag7": "Clorofila hace 7 días",
+    "chl_trend7": "Tendencia de clorofila 7 días",
+    "NDCI": "Índice de clorofila (NDCI)", "CI_red": "Índice de cianobacterias (CI)",
+    "FAI": "Índice de algas flotantes (FAI)", "turbidity": "Turbidez (satélite)",
     "B2": "Reflectancia azul (B2)", "B3": "Reflectancia verde (B3)",
     "B4": "Reflectancia roja (B4)", "B5": "Red-edge (B5)", "B8": "Infrarrojo cercano (B8)",
-    "temp_air_2m": "Temperatura del aire", "temp_air_2m_roll7": "Temp. aire media 7 dias",
-    "solar_radiation": "Radiacion solar", "solar_radiation_roll7": "Radiacion solar media 7 dias",
-    "precipitation": "Precipitacion", "precipitation_roll7": "Precipitacion media 7 dias",
-    "wind_speed_10m": "Viento a 10 m", "wind_speed_10m_roll7": "Viento medio 7 dias",
-    "surface_pressure": "Presion superficial",
-    "tp_context": "Fosforo total (in-situ)", "ammonia": "Amonio (in-situ)",
-    "water_temp": "Temperatura del agua (in-situ)", "do_mgl": "Oxigeno disuelto (in-situ)",
+    "temp_air_2m": "Temperatura del aire", "temp_air_2m_roll7": "Temp. aire media 7 días",
+    "solar_radiation": "Radiación solar", "solar_radiation_roll7": "Radiación solar media 7 días",
+    "precipitation": "Precipitación", "precipitation_roll7": "Precipitación media 7 días",
+    "wind_speed_10m": "Viento a 10 m", "wind_speed_10m_roll7": "Viento medio 7 días",
+    "surface_pressure": "Presión superficial",
+    "tp_context": "Fósforo total (in-situ)", "ammonia": "Amonio (in-situ)",
+    "water_temp": "Temperatura del agua (in-situ)", "do_mgl": "Oxígeno disuelto (in-situ)",
     "ph": "pH (in-situ)", "turbidity_insitu": "Turbidez (in-situ)",
     "spec_cond": "Conductividad (in-situ)", "secchi": "Transparencia Secchi (in-situ)",
 }
@@ -75,7 +75,7 @@ def _feat_es(f):
 
 @st.cache_data(show_spinner=False)
 def load_nested_metrics():
-    """Metricas de validacion ANIDADA (test intacto) por grupo->horizonte: skill vs persistencia
+    """Métricas de validación ANIDADA (test intacto) por grupo->horizonte: skill vs persistencia
     con IC95% bootstrap. Producidas por evaluate_nested.py. Devuelve dict o None."""
     p = os.path.join(C.DIR_REPORTS, "nested_metrics.json")
     if not os.path.exists(p):
@@ -86,8 +86,8 @@ def load_nested_metrics():
 
 
 def render_skill_badge(group, h):
-    """Insignia de credibilidad: skill validado vs persistencia (test nunca tocado) para el
-    grupo+horizonte, honesta con el IC95% (verde si excluye 0, ambar si es no concluyente)."""
+    """Insignia de credibilidad: skill validado vs persistencia (test temporal reservado) para el
+    grupo+horizonte, honesta con el IC95% (verde si excluye 0, ámbar si es no concluyente)."""
     d = load_nested_metrics()
     node = (d or {}).get(group, {}).get(str(h))
     if not node or "skill_nested" not in node:
@@ -97,7 +97,7 @@ def render_skill_badge(group, h):
     base = (f"ventaja sobre persistencia **{pt:+.2f}**  ·  IC95% [{lo:+.2f}, {hi:+.2f}]  ·  "
             f"a +{h} días  ·  sobre datos nunca vistos (n={n}, eventos={pos})")
     if lo > 0:
-        st.success(f"🏅 **Validación externa — el modelo SUPERA al pronóstico ingenuo:** {base}  ·  "
+        st.success(f"**Validación temporal — el modelo SUPERA al pronóstico ingenuo:** {base}  ·  "
                    f"**resultado significativo** (todo el IC95% está por encima de 0).")
         st.caption("Comparamos el modelo contra la *persistencia* (asumir que mañana el riesgo será "
                    "igual al de hoy). La *ventaja* es cuánto mejora el modelo sobre esa referencia, "
@@ -108,7 +108,7 @@ def render_skill_badge(group, h):
 @st.cache_data(show_spinner=False)
 def load_shap():
     """Importancia SHAP por (grupo, horizonte) precomputada por explain_model.py.
-    Devuelve DataFrame o None si aun no se ha corrido la explicabilidad."""
+    Devuelve DataFrame o None si aún no se ha corrido la explicabilidad."""
     p = os.path.join(C.DIR_REPORTS, "shap_importance.csv")
     if not os.path.exists(p):
         return None
@@ -117,7 +117,7 @@ def load_shap():
 
 def trajectory_figure(fc, sel_h):
     """Curva interactiva de clorofila prevista a +1/+3/+5/+7 d con banda P10-P90 sombreada,
-    marcadores coloreados por nivel y lineas de umbral. Todo el dato ya viene en fc['horizons']."""
+    marcadores coloreados por nivel y líneas de umbral. Todo el dato ya viene en fc['horizons']."""
     hs = sorted(fc["horizons"], key=lambda x: x["horizon"])
     xs = [f"+{x['horizon']} d" for x in hs]
     y = [x["chl_pred"] for x in hs]
@@ -139,23 +139,23 @@ def trajectory_figure(fc, sel_h):
                              customdata=cdata,
                              hovertemplate="<b>%{x}</b><br>Clorofila: %{y:.1f} µg/L<br>"
                              "Banda: %{customdata[0]:.1f}–%{customdata[1]:.1f} µg/L<br>"
-                             "Prob. anomalia: %{customdata[2]:.0f}%<br>"
+                             "Prob. anomalía: %{customdata[2]:.0f}%<br>"
                              "Nivel: %{customdata[3]}<extra></extra>",
                              name="Clorofila prevista"))
     fig.add_hline(y=fc["thr_floracion"], line=dict(color="#d64545", dash="dash", width=1.4),
-                  annotation_text="Floracion", annotation_position="top left")
+                  annotation_text="Floración", annotation_position="top left")
     fig.add_hline(y=fc["thr_elevada"], line=dict(color="#e0a800", dash="dot", width=1.4),
                   annotation_text="Biomasa elevada", annotation_position="bottom left")
     fig.update_layout(height=380, margin=dict(l=10, r=10, t=34, b=10),
                       paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,.55)",
-                      yaxis_title="Clorofila-a prevista (µg/L)", xaxis_title="Horizonte de pronostico",
+                      yaxis_title="Clorofila-a prevista (µg/L)", xaxis_title="Horizonte de pronóstico",
                       legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
                       font=dict(family="Segoe UI"), hovermode="x unified")
     return fig
 
 
 def gauge_figure(prob, thr, nivel):
-    """Medidor (gauge) animado de la probabilidad de anomalia, con el umbral operativo REAL
+    """Medidor (gauge) animado de la probabilidad de anomalía, con el umbral operativo REAL
     (calibrado) marcado. La aguja anima de 0 al valor al renderizar."""
     val, thrp = prob * 100.0, thr * 100.0
     fig = go.Figure(go.Indicator(
@@ -163,7 +163,7 @@ def gauge_figure(prob, thr, nivel):
         number={"suffix": "%", "font": {"size": 42, "color": "#0a6b6b"}},
         delta={"reference": thrp, "increasing": {"color": "#d64545"},
                "decreasing": {"color": "#2fb37f"}, "suffix": " pts vs umbral"},
-        title={"text": "Probabilidad de anomalia (P85)", "font": {"size": 15}},
+        title={"text": "Probabilidad de anomalía (P85)", "font": {"size": 15}},
         gauge={"axis": {"range": [0, max(100.0, val * 1.1)]},
                "bar": {"color": LEVEL_COLOR.get(nivel, "#0fa3a3")},
                "bgcolor": "rgba(255,255,255,.4)",
@@ -177,8 +177,8 @@ def gauge_figure(prob, thr, nivel):
 
 
 def shap_bar_figure(group, h, topn=8):
-    """Barras horizontales de las variables que MAS mueven la prediccion de este grupo+horizonte
-    (media |SHAP| precomputada). Devuelve None si no hay explicabilidad calculada aun."""
+    """Barras horizontales de las variables que MÁS mueven la predicción de este grupo+horizonte
+    (media |SHAP| precomputada). Devuelve None si no hay explicabilidad calculada aún."""
     d = load_shap()
     if d is None:
         return None
@@ -197,14 +197,30 @@ def shap_bar_figure(group, h, topn=8):
     return fig
 
 
-def forecast_animation_gif(wb, path, t0, res, horizons=(1, 3, 5, 7), dpi=82, width=1040,
-                           steps=7, trans_ms=65, hold_ms=460, nowcast_level=None):
-    """Genera un GIF que se reproduce solo (estilo pronostico del clima en TV): opcionalmente parte
-    del estado de HOY (observado) y recorre los mapas de biomasa prevista a +1/+3/+5/+7 dias sobre
+def shared_forecast_color_limits(fc):
+    """Escala absoluta común para hoy y todos los horizontes.
+
+    Con autoescala por cuadro, multiplicar el mismo patrón por otro nivel producía
+    prácticamente los mismos colores. Una escala única hace visible ese cambio.
+    """
+    levels = [float(fc["chl0"])] + [float(x["chl_pred"]) for x in fc["horizons"]]
+    levels = [value for value in levels if np.isfinite(value) and value >= 0]
+    if not levels:
+        return (0.0, 1.0)
+    low = max(0.0, min(levels) * 0.55)
+    high = max(max(levels) * 1.45, low + 1.0)
+    return (low, high)
+
+
+def forecast_animation_gif(wb, path, t0, res, horizons=(1, 3, 5, 7), dpi=120, width=1280,
+                           target_aspect=None, steps=5, trans_ms=75, hold_ms=460,
+                           nowcast_level=None, color_limits=None):
+    """Genera un GIF que se reproduce solo (estilo pronóstico del clima en TV): opcionalmente parte
+    del estado de HOY (observado) y recorre los mapas de biomasa prevista a +1/+3/+5/+7 días sobre
     la MISMA escena. Para que sea FLUIDO interpola (cross-fade) cuadros intermedios entre horizontes
-    con Pillow y cierra el bucle de forma continua; el modelo solo se evalua en los horizontes
-    reales (sin tocar modelado). 'steps' = cuadros de transicion por tramo; pausa 'hold_ms' en cada
-    dia y 'trans_ms' en la disolvencia. Devuelve bytes del GIF o None si no se pudo generar cuadros.
+    con Pillow y cierra el bucle de forma continua; el modelo solo se evalúa en los horizontes
+    reales (sin tocar modelado). 'steps' = cuadros de transición por tramo; pausa 'hold_ms' en cada
+    día y 'trans_ms' en la disolvencia. Devuelve bytes del GIF o None si no se pudo generar cuadros.
     Si nowcast_level se pasa, el primer cuadro es 'Hoy (observado)' con ese nivel de clorofila."""
     keys = []
     # cuadro "Hoy" (observado) al inicio, si se pide
@@ -215,17 +231,27 @@ def forecast_animation_gif(wb, path, t0, res, horizons=(1, 3, 5, 7), dpi=82, wid
             continue
         try:
             nl = nowcast_level if kind == "nowcast" else None
-            fig, _ = build_map_figure(wb, hh, path, t0, res=res, gradient_focus=True, nowcast_level=nl)
+            fig, _ = build_map_figure(
+                wb, hh, path, t0, res=res, gradient_focus=True,
+                focus_water=True, nowcast_level=nl, hq=True,
+                color_limits=color_limits)
         except Exception as e:
             log.warning("frame %s +%dd fallo: %s", kind, hh, e)
             continue
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=dpi)      # figsize fijo -> cuadros clave del mismo tamaño
+        fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.14,
+                    facecolor="white", transparent=False)
         plt.close(fig)
         buf.seek(0)
         im = Image.open(buf).convert("RGB")
-        if width and im.width != width:               # aligerar para que el GIF no pese de mas
-            im = im.resize((width, round(im.height * width / im.width)))
+        if width:
+            # Misma proporción que el PNG principal y tamaño exacto entre cuadros.
+            # ImageOps.pad conserva la figura completa y agrega, si hiciera falta, un
+            # margen blanco mínimo en vez de deformarla o recortarla.
+            aspect = float(target_aspect or (im.width / im.height))
+            target_size = (int(width), max(1, round(width / aspect)))
+            im = ImageOps.pad(im, target_size, method=Image.Resampling.LANCZOS,
+                              color="white", centering=(0.5, 0.5))
         keys.append(im)
     if not keys:
         return None
@@ -240,13 +266,13 @@ def forecast_animation_gif(wb, path, t0, res, horizons=(1, 3, 5, 7), dpi=82, wid
     if len(keys) == 1:
         _add(keys[0], hold_ms)
     else:
-        for i in range(len(keys) - 1):                # pausa en el dia i, luego disuelve al i+1
+        for i in range(len(keys) - 1):                # pausa en el día i, luego disuelve al i+1
             a, b = keys[i], keys[i + 1]
             _add(a, hold_ms)
             for k in range(1, steps + 1):
                 _add(Image.blend(a, b, k / (steps + 1)), trans_ms)
-        _add(keys[-1], hold_ms)                        # pausa en el ultimo dia
-        for k in range(1, steps + 1):                  # cierre continuo: ultimo -> primero
+        _add(keys[-1], hold_ms)                        # pausa en el último día
+        for k in range(1, steps + 1):                  # cierre continuo: último -> primero
             _add(Image.blend(keys[-1], keys[0], k / (steps + 1)), trans_ms)
 
     out = io.BytesIO()
@@ -254,12 +280,147 @@ def forecast_animation_gif(wb, path, t0, res, horizons=(1, 3, 5, 7), dpi=82, wid
                    duration=durs, loop=0, disposal=2, optimize=True)
     return out.getvalue()
 
+
+def animation_frame_metadata(fc, steps=5):
+    """Metadatos sincronizados con los cuadros que crea ``forecast_animation_gif``.
+
+    Los horizontes reales se identifican como pronósticos. Los cuadros de disolvencia
+    se marcan explícitamente como interpolación visual para no inventar horizontes.
+    """
+    def state(label, day, chl, p10=None, p90=None, probability=None):
+        level = C.biomass_level(float(chl), fc["thr_floracion"], fc["thr_elevada"])
+        return {"label": label, "day": float(day), "chl": float(chl),
+                "p10": None if p10 is None else float(p10),
+                "p90": None if p90 is None else float(p90),
+                "probability": None if probability is None else float(probability),
+                "level": level, "transition": False}
+
+    states = [state("Hoy (observado)", 0, fc["chl0"])]
+    for item in sorted(fc["horizons"], key=lambda value: value["horizon"]):
+        states.append(state(
+            f"+{item['horizon']} día{'s' if item['horizon'] != 1 else ''}",
+            item["horizon"], item["chl_pred"], item["p10"], item["p90"],
+            item["prob_riesgo"]))
+
+    def between(a, b, alpha):
+        def mix(key):
+            av, bv = a.get(key), b.get(key)
+            return None if av is None or bv is None else av + alpha * (bv - av)
+        chl = a["chl"] + alpha * (b["chl"] - a["chl"])
+        day = a["day"] + alpha * (b["day"] - a["day"])
+        result = state(f"Día {day:.1f} · transición visual {a['label']} → {b['label']}", day, chl,
+                       mix("p10"), mix("p90"), mix("probability"))
+        result["transition"] = True
+        return result
+
+    metadata = []
+    for index in range(len(states) - 1):
+        metadata.append(states[index])
+        metadata.extend(between(states[index], states[index + 1], k / (steps + 1))
+                        for k in range(1, steps + 1))
+    metadata.append(states[-1])
+    metadata.extend(between(states[-1], states[0], k / (steps + 1))
+                    for k in range(1, steps + 1))
+    return metadata
+
+
+@st.cache_data(show_spinner=False)
+def controllable_gif_html(gif_bytes, metadata_json="[]"):
+    """Convierte el GIF en un reproductor HTML controlable sin depender de ffmpeg.
+
+    El navegador recibe sus cuadros como WebP: puede pausar, avanzar, retroceder,
+    buscar con una barra y cambiar velocidad. El GIF original se conserva para descarga.
+    """
+    encoded, durations = [], []
+    with Image.open(io.BytesIO(gif_bytes)) as source:
+        n_frames = int(getattr(source, "n_frames", 1))
+        aspect = source.width / source.height
+        for index in range(n_frames):
+            source.seek(index)
+            frame = source.convert("RGB")
+            buf = io.BytesIO()
+            frame.save(buf, format="WEBP", quality=86, method=4)
+            encoded.append("data:image/webp;base64," + base64.b64encode(buf.getvalue()).decode("ascii"))
+            durations.append(max(40, int(source.info.get("duration", 100))))
+
+    metadata = json.loads(metadata_json)
+    if metadata and len(metadata) != len(encoded):
+        metadata = [metadata[round(i * (len(metadata) - 1) / max(1, len(encoded) - 1))]
+                    for i in range(len(encoded))]
+    frames_json = json.dumps(encoded, separators=(",", ":"))
+    durations_json = json.dumps(durations, separators=(",", ":"))
+    metadata_json = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
+    html = f"""
+<!doctype html><html><head><meta charset="utf-8"><style>
+*{{box-sizing:border-box}} body{{margin:0;background:transparent;font-family:Segoe UI,Arial,sans-serif}}
+.player{{width:100%;background:#f7fbfb;border:1px solid #c9dddd;border-radius:12px;
+         padding:8px;box-shadow:0 5px 16px rgba(18,70,75,.12)}}
+#frame{{display:block;width:100%;height:auto;border-radius:7px;background:white}}
+.controls{{display:grid;grid-template-columns:auto auto auto 1fr auto auto;gap:8px;align-items:center;
+           padding:8px 4px 2px}}
+button,select{{border:1px solid #7daeb0;background:white;color:#174e52;border-radius:8px;
+              padding:7px 12px;font-weight:650;cursor:pointer}}
+button:hover{{background:#e7f5f4}} input[type=range]{{width:100%;accent-color:#087f83}}
+#counter{{min-width:88px;text-align:right;color:#245e61;font-size:13px;font-weight:650}}
+.readout{{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:8px 4px 2px}}
+.card{{background:white;border:1px solid #d6e7e6;border-left:5px solid #0fa3a3;border-radius:10px;
+       padding:10px 13px;min-height:92px;box-shadow:0 5px 13px rgba(18,70,75,.08)}}
+.card.floracion{{border-left-color:#d64141;background:#fff4f4}} .card.elevada{{border-left-color:#e9a21b;background:#fffaee}}
+.card.normal{{border-left-color:#2ca56b;background:#f1fbf6}} .eyebrow{{font-size:12px;color:#58797a;font-weight:700}}
+.value{{font-size:25px;color:#173f42;font-weight:750;margin:4px 0}} .detail{{font-size:12px;color:#678284}}
+.transition{{color:#9a6711;font-style:italic}} @media(max-width:700px){{.readout{{grid-template-columns:1fr}}}}
+</style></head><body><div class="player">
+<img id="frame" alt="Animación controlable del pronóstico">
+<div class="controls">
+  <button id="prev" title="Cuadro anterior">&#9664;</button>
+  <button id="play" title="Reproducir o pausar">&#9654; Reproducir</button>
+  <button id="next" title="Cuadro siguiente">&#9654;</button>
+  <input id="seek" type="range" min="0" max="{max(0, len(encoded)-1)}" value="0" step="1">
+  <select id="speed" title="Velocidad"><option value="2">0.5×</option><option value="1" selected>1×</option>
+    <option value="0.67">1.5×</option><option value="0.5">2×</option></select>
+  <span id="counter">1 / {len(encoded)}</span>
+</div>
+<div class="readout">
+ <div id="levelCard" class="card"><div id="day" class="eyebrow"></div><div id="level" class="value"></div>
+   <div id="prob" class="detail"></div></div>
+ <div class="card"><div class="eyebrow">Clorofila-a del cuadro</div><div id="chl" class="value"></div>
+   <div id="band" class="detail"></div><div id="note" class="detail transition"></div></div>
+</div></div><script>
+const frames={frames_json}, durations={durations_json}, metadata={metadata_json};
+let i=0, playing=false, timer=null;
+const img=document.getElementById('frame'), seek=document.getElementById('seek');
+const play=document.getElementById('play'), counter=document.getElementById('counter');
+const speed=document.getElementById('speed');
+function show(n){{i=(n+frames.length)%frames.length;img.src=frames[i];seek.value=i;
+  counter.textContent=(i+1)+' / '+frames.length;
+  const m=metadata[i]||{{}};document.getElementById('day').textContent=m.label||'';
+  const names={{floracion:'FLORACIÓN',elevada:'BIOMASA ELEVADA',normal:'NORMAL'}};
+  document.getElementById('level').textContent=(names[m.level]||'')+(m.chl!=null?' — '+m.chl.toFixed(1)+' µg/L':'');
+  document.getElementById('levelCard').className='card '+(m.level||'');
+  document.getElementById('chl').textContent=m.chl!=null?m.chl.toFixed(1)+' µg/L':'—';
+  document.getElementById('prob').textContent=m.probability!=null?'Prob. de anomalía: '+(m.probability*100).toFixed(0)+'%':'Observación actual';
+  document.getElementById('band').textContent=m.p10!=null?'P10–P90: '+m.p10.toFixed(1)+' – '+m.p90.toFixed(1)+' µg/L':'Sin banda de pronóstico';
+  document.getElementById('note').textContent=m.transition?'Interpolación visual entre horizontes; no es un pronóstico adicional.':'';
+}}
+function stop(){{playing=false;clearTimeout(timer);play.innerHTML='&#9654; Reproducir';}}
+function tick(){{if(!playing)return;show(i+1);timer=setTimeout(tick,durations[i]*Number(speed.value));}}
+play.onclick=()=>{{if(playing){{stop();}}else{{playing=true;play.innerHTML='&#10074;&#10074; Pausar';
+  timer=setTimeout(tick,durations[i]*Number(speed.value));}}}};
+document.getElementById('prev').onclick=()=>{{stop();show(i-1);}};
+document.getElementById('next').onclick=()=>{{stop();show(i+1);}};
+seek.oninput=()=>{{stop();show(Number(seek.value));}};
+speed.onchange=()=>{{if(playing){{clearTimeout(timer);timer=setTimeout(tick,durations[i]*Number(speed.value));}}}};
+show(0);
+</script></body></html>"""
+    return html, int(round(1280 / aspect)) + 190
+
 # --------------------------------------------------------------------------------------
-# Tema visual (acuatico) — CSS + encabezado "hero". Solo presentacion, no toca la logica.
+# Tema visual (acuático) — CSS + encabezado "hero". Solo presentación, no toca la lógica.
 # --------------------------------------------------------------------------------------
 THEME_CSS = """
 <style>
-.block-container { padding-top: 0.6rem; padding-bottom: 2.2rem; max-width: 1180px; }
+.block-container { padding-top: 0.6rem; padding-bottom: 2.2rem; max-width: 100%;
+  padding-left: 2.5rem; padding-right: 2.5rem; }
 
 /* perspectiva para que las tarjetas tengan profundidad 3D real */
 [data-testid="stHorizontalBlock"] { perspective: 1200px; }
@@ -274,7 +435,7 @@ THEME_CSS = """
 .stButton > button:active { transform:translateY(4px);
   box-shadow:0 2px 0 #0a6b6b, 0 4px 10px rgba(6,43,63,.25); }
 
-/* Tarjetas (metricas): glass + inclinacion 3D al pasar el mouse */
+/* Tarjetas (métricas): glass + inclinación 3D al pasar el mouse */
 [data-testid="stMetric"] {
   background:rgba(255,255,255,.72); backdrop-filter:blur(8px);
   border:1px solid rgba(255,255,255,.6); border-left:5px solid #0fa3a3; border-radius:14px;
@@ -288,7 +449,7 @@ THEME_CSS = """
   box-shadow:0 10px 22px rgba(6,43,63,.10); transform-style:preserve-3d; transition:transform .2s ease; }
 [data-testid="stAlert"]:hover { transform:translateY(-3px) rotateX(4deg); }
 
-/* La figura/mapa como lamina flotante */
+/* La figura/mapa como lámina flotante */
 [data-testid="stImage"], [data-testid="stPyplotChart"] {
   border-radius:14px; box-shadow:0 16px 36px rgba(6,43,63,.18); overflow:hidden;
   transition:transform .3s ease; }
@@ -302,7 +463,7 @@ section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2, sectio
 </style>
 """
 
-# Encabezado 3D: animacion WebGL de agua (shader con iluminacion) embebida -> funciona OFFLINE.
+# Encabezado 3D: animación WebGL de agua (shader con iluminación) embebida -> funciona OFFLINE.
 HERO_3D = """
 <!DOCTYPE html><html><head><meta charset="utf-8"><style>
   html,body{margin:0;height:100%;overflow:hidden;background:#f2fbfa;
@@ -322,13 +483,9 @@ HERO_3D = """
 <div id="wrap">
   <canvas id="gl"></canvas>
   <div id="ov">
-    <h1>🌊 Alerta temprana de biomasa algal (HABs)</h1>
-    <p>Pronostico de riesgo de floraciones algales a 0–7 dias. Clorofila-a como
-       <b>proxy de biomasa</b>: senala <b>riesgo</b>, no confirma toxicidad.</p>
-    <div class="tags">
-      <span class="tag">🛰️ Sentinel-2</span><span class="tag">💧 5 cuerpos validados</span>
-      <span class="tag">📈 Horizontes 0–7 dias</span><span class="tag">🧪 XGBoost + Red neuronal</span>
-    </div>
+    <h1>Alerta temprana de biomasa algal (HABs)</h1>
+    <p>Pronóstico de riesgo de floraciones algales a 0–7 días. Clorofila-a como
+       <b>proxy de biomasa</b>: señala <b>riesgo</b>, no confirma toxicidad.</p>
   </div>
 </div>
 <script>
@@ -367,7 +524,7 @@ HERO_3D = """
 
 @st.cache_resource(show_spinner=False)
 def load_resources():
-    """Carga UNA sola vez (cacheada entre interacciones) los modelos de produccion:
+    """Carga UNA sola vez (cacheada entre interacciones) los modelos de producción:
     umbrales por cuerpo, calibradores de alerta, bundles XGBoost (+cuantiles CQR) y redes NN.
     Devuelve None si falta lo esencial (se avisa en la UI, no se truena)."""
     thr_path = os.path.join(MODELS, "thr_body.pkl")
@@ -389,7 +546,7 @@ def load_resources():
 
 
 def list_example_scenes(wb):
-    """Lista (fecha, ruta) de las escenas Sentinel-2 disponibles del cuerpo (mas recientes primero)."""
+    """Lista (fecha, ruta) de las escenas Sentinel-2 disponibles del cuerpo (más recientes primero)."""
     folder = KEY2META[wb]["folder"]
     tifs = glob.glob(os.path.join(C.DIR_IMAGENES, folder, "**", "*.tif"), recursive=True)
     items = []
@@ -403,20 +560,23 @@ def list_example_scenes(wb):
 
 # Cota de escaneo: puntuar calidad de agua lee un raster por escena; algunos cuerpos costeros
 # tienen rasters pesados (~0.6 s c/u) y evaluarlos TODOS al cargar bloqueaba la UI 30-60 s. Se
-# acota a las mas recientes y se muestra barra de avance (suficiente para elegir una escena limpia).
-MAX_RANK_SCENES = 40
+# acota a las más recientes y se muestra barra de avance (suficiente para elegir una escena limpia).
+# Se revisan suficientes fechas para no quedar atrapados en las escenas recientes que
+# tienen imagen pero ya no coinciden con target fresco. Solo se abre el raster de las
+# fechas pronosticables, por lo que ampliar la ventana no multiplica todo el I/O.
+MAX_RANK_SCENES = 96
 
 
 def rank_scenes_with_progress(wb):
     """Ordena las escenas del cuerpo por CALIDAD de agua limpia (mejor primero), reutilizando
-    _clear_water_score de make_maps (premia agua coherente, penaliza nubosidad). Solo puntua las
-    MAX_RANK_SCENES mas recientes, muestra una BARRA DE PROGRESO (para que no parezca colgada) y
+    _clear_water_score de make_maps (premia agua coherente, penaliza nubosidad). Solo puntúa las
+    MAX_RANK_SCENES más recientes, muestra una BARRA DE PROGRESO (para que no parezca colgada) y
     guarda el resultado en session_state -> se calcula una sola vez por cuerpo. Devuelve lista de
     (fecha, ruta, score) ordenada, o [] si no hay escenas."""
-    key = f"ranked_{wb}"
+    key = f"ranked_forecastable_v3_{wb}"
     if key in st.session_state:
         return st.session_state[key]
-    scenes = list_example_scenes(wb)[:MAX_RANK_SCENES]     # mas recientes primero; acota el I/O
+    scenes = list_example_scenes(wb)[:MAX_RANK_SCENES]     # más recientes primero; acota el I/O
     if not scenes:
         st.session_state[key] = []
         return []
@@ -424,7 +584,13 @@ def rank_scenes_with_progress(wb):
                                 f"{NICE.get(wb, wb)}...")
     scored = []
     for i, (fecha, path) in enumerate(scenes):
-        scored.append((fecha, path, _clear_water_score(path)))
+        # Una imagen limpia no basta: la fecha tambien debe tener target causal
+        # suficientemente fresco. De lo contrario el mapa se construia, pero la app
+        # se detenia antes de mostrarlo al no poder generar el pronostico.
+        context = (build_features(wb, pd.Timestamp(fecha))
+                   if re.match(r"\d{4}-\d{2}-\d{2}", fecha) else None)
+        if context is not None:
+            scored.append((fecha, path, _clear_water_score(path)))
         bar.progress((i + 1) / len(scenes))
     bar.empty()
     scored.sort(key=lambda x: x[2], reverse=True)
@@ -434,44 +600,85 @@ def rank_scenes_with_progress(wb):
 
 def body_median_spectral(path):
     """Mediana espectral del agua de una escena externa (GeoTIFF subido) -> para forecast_body.
-    Robusto: si el archivo no es un raster valido o no tiene 5 bandas, devuelve None (no trona)."""
+    Robusto: si el archivo no es un raster válido o no tiene 5 bandas, devuelve None (no trona)."""
     try:
-        sp = _scene_pixels(path)                 # lanza si el archivo no es un raster valido
+        sp = _scene_pixels(path)                 # lanza si el archivo no es un raster válido
     except Exception as e:
-        log.warning("GeoTIFF invalido: %s", e)
+        log.warning("GeoTIFF inválido: %s", e)
         return None
     if sp is None:                               # no tiene 5 bandas
         return None
-    feats2d, water = sp
+    feats2d, water, _ = sp
     if int(water.sum()) < 50:
         return "low_water"
     return {f: float(np.median(feats2d[f][water])) for f in SPEC}
 
 
+def render_selected_horizon_cards(fc, hh, stats, horizon):
+    """Tarjetas fijas usadas cuando no está activo el reproductor sincronizado."""
+    c_a, c_b = st.columns(2)
+    with c_a:
+        st.markdown("**Nivel de biomasa algal**")
+        nivel = hh["nivel"] if hh is not None else None
+        if nivel == "floracion":
+            st.error(f"FLORACIÓN — chl-a prevista {hh['chl_pred']:.1f} µg/L "
+                     f"(≥ {fc['thr_floracion']:.0f})")
+        elif nivel == "elevada":
+            st.warning(f"BIOMASA ELEVADA — chl-a prevista {hh['chl_pred']:.1f} µg/L "
+                       f"(≥ {fc['thr_elevada']:.0f})")
+        elif nivel is not None:
+            st.success(f"NORMAL — chl-a prevista {hh['chl_pred']:.1f} µg/L "
+                       f"(< {fc['thr_elevada']:.0f})")
+        if hh is not None:
+            st.caption(f"Área en floración (≥ {stats['thr']:.0f} µg/L): "
+                       f"**{stats['pct_alert']:.0f}%**  ·  biomasa elevada "
+                       f"(≥ {stats['thr_elev']:.0f}): **{stats['pct_elev']:.0f}%**  ·  "
+                       f"prob. anomalía (P85): {hh['prob_riesgo']*100:.0f}%")
+            # Magnitud absoluta y anomalía respecto a la historia del cuerpo son señales distintas.
+            alerta = hh["prob_riesgo"] >= fc["alert_threshold"]
+            alto = nivel in ("elevada", "floracion")
+            if alto and not alerta:
+                st.caption("*Nivel alto por **magnitud** de clorofila, pero **prob. de anomalía "
+                           "baja**: ese nivel es **habitual** en este cuerpo, no un salto atípico. "
+                           "Son medidas distintas — el nivel mide cuánta biomasa; la anomalía, "
+                           "si es inusual aquí.*")
+            elif (not alto) and alerta:
+                st.caption("*Magnitud prevista **normal**, pero el modelo marca **prob. de anomalía "
+                           "elevada** (posible cambio atípico): conviene vigilar. Son medidas distintas.*")
+    with c_b:
+        st.markdown("**Clorofila-a prevista (intensidad)**")
+        if hh is not None:
+            banda = (f"P10–P90: {hh['p10']:.1f} – {hh['p90']:.1f} µg/L"
+                     if hh["p10"] is not None else "banda no disponible")
+            st.metric(f"clorofila-a media prevista (+{horizon} d)",
+                      f"{hh['chl_pred']:.1f} µg/L")
+            st.caption(f"Banda de incertidumbre calibrada (CQR ~80%) · {banda}")
+
+
 # ----------------------------------------------------------------------------------------
 # UI
 # ----------------------------------------------------------------------------------------
-st.set_page_config(page_title="Alerta temprana de biomasa algal (HABs)", page_icon="🌊",
+st.set_page_config(page_title="Alerta temprana de biomasa algal (HABs)",
                    layout="wide", initial_sidebar_state="expanded")
 st.markdown(THEME_CSS, unsafe_allow_html=True)
 
 with st.sidebar:
-    st.header("Como leer esta herramienta")
+    st.header("Cómo leer esta herramienta")
     st.markdown(
-        "- **Es un PRONOSTICO a 0-7 dias**, no una deteccion sobre la imagen: estima la biomasa "
+        "- **Es un PRONÓSTICO a 0-7 días**, no una detección sobre la imagen: estima la biomasa "
         "algal (clorofila-a) **a futuro** a partir del estado en t0.\n"
         "- **NO acepta fotos normales** (RGB de celular / capturas de Maps). Requiere una escena "
         "**Sentinel-2 de 5 bandas** (B2 azul, B3 verde, B4 rojo, **B5 red-edge**, **B8 NIR**): las "
-        "bandas red-edge e infrarrojo son las que estiman clorofila; una foto comun no las tiene.\n"
-        "- **Validado solo para 5 cuerpos** (abajo). Fuera de ellos no hay modelo ni calibracion.\n"
+        "bandas red-edge e infrarrojo son las que estiman clorofila; una foto común no las tiene.\n"
+        "- **Validado solo para 5 cuerpos** (abajo). Fuera de ellos no hay modelo ni calibración.\n"
         "- **Clorofila-a = proxy de biomasa**, no de toxicidad. La alerta marca **riesgo** que "
-        "amerita verificacion de campo.\n"
+        "amerita verificación de campo.\n"
         "- **Sentinel-2 mide el PIGMENTO (clorofila-a), no la especie ni la toxina**: no distingue "
         "cianobacterias (lagos) ni dinoflagelados de marea roja (costa). Identificar el organismo "
-        "y confirmar toxinas exige **muestreo de campo** (microscopia / ensayos de toxinas).")
+        "y confirmar toxinas exige **muestreo de campo** (microscopía / ensayos de toxinas).")
     st.divider()
     st.caption("Modelo: XGBoost (intensidad + intervalos CQR) + Red neuronal (alerta), por "
-               "grupo ecologico y horizonte. Pronostico causal sin fuga (validacion anidada).")
+               "grupo ecológico y horizonte. Pronóstico causal sin fuga (validación anidada).")
 
 components.html(HERO_3D, height=250, scrolling=False)
 st.caption(DISCLAIMER)
@@ -482,21 +689,20 @@ with c1:
     wb = st.selectbox("Cuerpo de agua", list(KEY2META.keys()),
                       format_func=lambda k: NICE.get(k, k))
 with c2:
-    # +3 por defecto: h3/h5 usan senal espectral por pixel -> mapa con gradiente.
-    # h1 y h7 son body-level -> el mapa de biomasa sale uniforme (sin detalle espacial).
-    h = st.selectbox("Horizonte de pronostico", [1, 3, 5, 7], index=1, format_func=lambda x: f"+{x} dias")
+    # El pronóstico validado siempre es body-level; la textura del mapa es heurística.
+    h = st.selectbox("Horizonte de pronóstico", [1, 3, 5, 7], index=1, format_func=lambda x: f"+{x} días")
     if h in (1, 7):
-        st.caption("ℹ️ +1 y +7 dias son horizontes *body-level*: el modelo predice el NIVEL "
-                   "del cuerpo, no por pixel. El mapa reparte ese nivel segun el patron "
-                   "espacial ACTUAL (estimacion), no es un pronostico pixel-a-pixel.")
+        st.caption("+1 y +7 días son horizontes *body-level*: el modelo predice el NIVEL "
+                   "del cuerpo, no por píxel. El mapa reparte ese nivel según el patrón "
+                   "espacial ACTUAL (estimación), no es un pronóstico píxel-a-píxel.")
 with c3:
     meta = KEY2META[wb]
     st.metric("Tipo", GRP_ES[meta["group"]].split(" / ")[0].capitalize())
-    st.caption(f"Pais: {PAIS_ES.get(meta['country'], meta['country'])}")
+    st.caption(f"País: {PAIS_ES.get(meta['country'], meta['country'])}")
 
 # etiqueta de cuerpo exploratorio (no se oculta)
 if wb in C.EXPLORATORY_BODIES:
-    st.warning(f"🔬 **{NICE.get(wb, wb)} esta en estado EXPLORATORIO**: sin verdad de campo in-situ "
+    st.warning(f"**{NICE.get(wb, wb)} está en estado EXPLORATORIO**: sin verdad de campo in-situ "
                "en la ventana 2023-2026 y con menos datos. Sus resultados son de **menor confianza**.")
 
 # --- Entrada de escena ---
@@ -506,54 +712,55 @@ path, t0, spec_override, scene_err = None, None, None, None
 if modo == "Usar escena de ejemplo":
     ranked = rank_scenes_with_progress(wb)           # (fecha, ruta, score) mejor primero; barra de avance
     if not ranked:
-        scene_err = f"No hay escenas Sentinel-2 de ejemplo para {NICE.get(wb, wb)}."
+        scene_err = (f"No hay una escena Sentinel-2 con contexto temporal suficiente para "
+                     f"pronosticar {NICE.get(wb, wb)}. Actualiza la serie target o prueba otra fuente.")
     else:
         best_fecha, best_path, best_score = ranked[0]
-        auto = st.checkbox("Usar automaticamente la mejor escena (agua mas limpia)", value=True,
+        auto = st.checkbox("Usar automáticamente la mejor escena (agua más limpia)", value=True,
                            help="Evita caer en escenas nubladas donde el cuerpo de agua ni aparece. "
                                 "Desmarca para elegir la fecha manualmente.")
         if auto:
             sel, path, sel_score = best_fecha, best_path, best_score
-            st.caption(f"Escena elegida automaticamente por calidad de agua limpia: **{best_fecha}**.")
+            st.caption(f"Escena elegida automáticamente por calidad de agua limpia: **{best_fecha}**.")
         else:
             # dropdown ORDENADO por calidad (mejor primero); la mejor se marca con estrella
             fechas = [f for f, _, _ in ranked]
-            marca = {best_fecha: f"{best_fecha}  ⭐ mejor (agua mas limpia)"}
-            sel = st.selectbox(f"Escena disponible ({len(ranked)} mas recientes, ordenadas por calidad)",
+            marca = {best_fecha: f"{best_fecha}  — mejor (agua más limpia)"}
+            sel = st.selectbox(f"Escena disponible ({len(ranked)} más recientes, ordenadas por calidad)",
                                fechas, format_func=lambda f: marca.get(f, f))
             rec = next(r for r in ranked if r[0] == sel)
             path, sel_score = rec[1], rec[2]
         t0 = pd.Timestamp(sel) if re.match(r"\d{4}-\d{2}-\d{2}", sel) else None
         # aviso si la escena elegida no tiene un cuerpo de agua coherente (nublada/dispersa)
         if sel_score <= 0 or (best_score > 0 and sel_score < 0.15 * best_score):
-            st.warning("⚠️ En esta escena el cuerpo de agua no se detecta con claridad "
+            st.warning("En esta escena el cuerpo de agua no se detecta con claridad "
                        "(probable nubosidad/neblina). Prueba otra fecha o usa la mejor escena "
-                       "automaticamente para un encuadre y color mas legibles.")
+                       "automáticamente para un encuadre y color más legibles.")
 else:
     up = st.file_uploader("Sube un GeoTIFF Sentinel-2 de 5 bandas (orden B2,B3,B4,B5,B8)",
                           type=["tif", "tiff"])
-    st.caption("Debe ser un raster georreferenciado de 5 bandas. Una foto RGB comun sera rechazada.")
+    st.caption("Debe ser un raster georreferenciado de 5 bandas. Una foto RGB común será rechazada.")
     if up is not None:
         tmp = os.path.join(tempfile.gettempdir(), f"app_upload_{up.name}")
         with open(tmp, "wb") as f:
             f.write(up.getbuffer())
         sm = body_median_spectral(tmp)
         if sm is None:
-            scene_err = ("El archivo NO tiene 5 bandas validas (B2,B3,B4,B5,B8). "
-                         "No es una escena Sentinel-2 valida — no se puede pronosticar.")
+            scene_err = ("El archivo NO tiene 5 bandas válidas (B2,B3,B4,B5,B8). "
+                         "No es una escena Sentinel-2 válida — no se puede pronosticar.")
         elif sm == "low_water":
-            scene_err = "La escena tiene muy pocos pixeles de agua validos para analizar."
+            scene_err = "La escena tiene muy pocos píxeles de agua válidos para analizar."
         else:
             path, spec_override = tmp, sm
-            # contexto NO espectral = ultima fecha disponible del cuerpo
+            # contexto NO espectral = última fecha disponible del cuerpo
             try:
                 from predict import _load, SCENE
                 sc = _load(SCENE, wb)
                 t0 = sc["fecha"].max() if len(sc) else None
             except Exception:
                 t0 = None
-            st.info("Escena externa valida. El contexto no-espectral (clorofila reciente, ERA5, "
-                    "in-situ) se toma de la ultima fecha disponible del cuerpo.")
+            st.info("Escena externa válida. El contexto no-espectral (clorofila reciente, ERA5, "
+                    "in-situ) se toma de la última fecha disponible del cuerpo.")
 
 if scene_err:
     st.error(scene_err)
@@ -561,116 +768,115 @@ if scene_err:
 # --- Analizar ---
 # La casilla se define ANTES del boton: asi su valor ya esta disponible en el rerun del clic.
 animate = st.checkbox(
-    "🎬 Mostrar animación tipo pronóstico del clima (recorre +1 → +7 días)", value=False,
+    "Mostrar animación tipo pronóstico del clima (recorre +1 → +7 días)", value=False,
+    key="animate_forecast",
     help="Genera un video corto que recorre la biomasa algal prevista a 1, 3, 5 y 7 días sobre la "
-         "misma escena, como un pronóstico del clima en la tele. Tarda unos segundos mas.")
+         "misma escena, como un pronóstico del clima en la tele. Tarda unos segundos más.")
+# Leer la clave explícita evita que un clic simultáneo en "Analizar" use el valor anterior
+# de la casilla durante el rerun (también hace estable el flujo en navegadores lentos).
+animate = bool(st.session_state.get("animate_forecast", animate))
 disabled = path is None
-if st.button("🔍 Analizar", type="primary", disabled=disabled):
+if st.button("Analizar", type="primary", disabled=disabled):
     res = load_resources()
     if res is None:
-        st.error("Faltan los modelos de produccion (artifacts/models/). Corre `python train_final.py`.")
+        st.error("Faltan los modelos de producción (artifacts/models/). Corre `python train_final.py`.")
         st.stop()
     if (GROUP[wb], h) not in res["bundles"]:
-        st.error(f"No hay modelo entrenado para {NICE.get(wb, wb)} a +{h} dias.")
+        st.error(f"No hay modelo entrenado para {NICE.get(wb, wb)} a +{h} días.")
         st.stop()
     try:
-        with st.spinner("Procesando escena y generando pronostico..."):
-            fig, stats = build_map_figure(wb, h, path, t0, res=res, gradient_focus=True)
+        with st.spinner("Procesando escena y generando pronóstico..."):
             fc = forecast_body(wb, t0, spec_override=spec_override, res=res)
+            if fc is None:
+                raise ValueError(
+                    "la escena no tiene contexto temporal suficiente (target reciente) para pronosticar"
+                )
+            color_limits = shared_forecast_color_limits(fc)
+            fig, stats = build_map_figure(
+                wb, h, path, t0, res=res,
+                gradient_focus=True, focus_water=True, hq=True,
+                color_limits=color_limits)
     except ValueError as e:
         st.error(f"No se pudo analizar la escena: {e}"); st.stop()
     except Exception as e:
-        log.exception("fallo en analisis")
+        log.exception("fallo en análisis")
         st.error(f"Error inesperado: {type(e).__name__}: {e}"); st.stop()
 
-    if fc is None:
-        st.error("No hay datos suficientes del cuerpo para construir el pronostico."); st.stop()
     hh = next((x for x in fc["horizons"] if x["horizon"] == h), None)
 
     # confianza (frescura / cobertura / estado)
-    conf, flags, age = guards.evaluate_guards(wb, fc["t0"], stats["n_water_px"])
+    conf, flags, age = guards.evaluate_guards(
+        wb, fc["t0"], stats["n_water_px"],
+        feature_ages=fc.get("feature_ages"),
+        missing_context=fc.get("missing_context"))
 
     st.divider()
-    st.subheader(f"Resultado — {NICE.get(wb, wb)} · pronostico a +{h} dias")
+    st.subheader(f"Resultado — {NICE.get(wb, wb)} · pronóstico a +{h} días")
     cap = f"Escena t0 = {fc['t0'].date() if fc['t0'] is not None else '?'}"
     cap += f"  ·  confianza: **{conf}**" + (f" ({', '.join(flags)})" if flags else "")
     st.caption(cap)
 
-    # ELEMENTOS 1 y 2: imagen satelital real + mapa de biomasa prevista (2 paneles, estilo make_maps)
-    # dpi=200 + bbox tight: misma nitidez que los PNG del CLI (no el ~100 dpi por defecto de Streamlit).
-    _mbuf = io.BytesIO()                                   # capturar PNG ANTES de st.pyplot (por si lo cierra)
-    fig.savefig(_mbuf, format="png", dpi=200, bbox_inches="tight")
+    # ELEMENTOS 1 y 2: imagen satelital real + mapa de biomasa prevista.
+    # Se exporta a 300 dpi (PNG lossless) y se muestra en una columna central más angosta:
+    # alta nitidez sin cubrir toda la pantalla.
+    _mbuf = io.BytesIO()                                   # capturar PNG antes de cerrar la figura
+    fig.savefig(_mbuf, format="png", dpi=300, bbox_inches="tight",
+                pad_inches=0.14, facecolor="white", transparent=False)
     st.session_state["map_png"] = _mbuf.getvalue()
-    st.pyplot(fig, use_container_width=True, dpi=200, bbox_inches="tight")
+    with Image.open(io.BytesIO(st.session_state["map_png"])) as _map_image:
+        st.session_state["map_aspect"] = _map_image.width / _map_image.height
+    plt.close(fig)
+    # Renderizar el PNG ya materializado es mas estable que delegar el guardado de
+    # Matplotlib a Streamlit y garantiza que lo visto sea identico a la descarga.
+    _map_left, _map_center, _map_right = st.columns([1, 5, 1])
+    with _map_center:
+        st.image(st.session_state["map_png"], width="stretch")
 
-    # INSIGNIA de credibilidad: skill validado vs persistencia (test intacto) del horizonte elegido.
-    render_skill_badge(GROUP[wb], h)
-
-    # ANIMACION tipo pronostico del clima (opcional): recorre +1/+3/+5/+7 d como un video.
+    # ANIMACIÓN tipo pronóstico del clima (opcional): recorre +1/+3/+5/+7 d como un video.
     # Cacheada por escena en session_state -> no se regenera al cambiar de horizonte o pestaña.
+    gif = None
     if animate:
-        sig = f"{wb}|{path}|{fc['t0']}"
+        sig = (f"gif_shared_scale_v3|{wb}|{path}|{fc['t0']}|"
+               f"{st.session_state.get('map_aspect')}|{color_limits}")
         if st.session_state.get("anim_sig") != sig:
             with st.spinner("Generando animación tipo pronóstico (Hoy → 7 días)..."):
                 st.session_state["anim_gif"] = forecast_animation_gif(
-                    wb, path, fc["t0"], res, nowcast_level=fc.get("chl0"))
+                    wb, path, fc["t0"], res, nowcast_level=fc.get("chl0"),
+                    target_aspect=st.session_state.get("map_aspect"),
+                    color_limits=color_limits)
                 st.session_state["anim_sig"] = sig
         gif = st.session_state.get("anim_gif")
         if gif:
-            st.markdown("### 🎬 Animación del pronóstico (Hoy → 7 días)")
-            st.image(gif, use_container_width=True)
+            st.markdown("### Animación del pronóstico (Hoy → 7 días)")
+            _gif_left, _gif_center, _gif_right = st.columns([1, 5, 1])
+            with _gif_center:
+                _frame_metadata = animation_frame_metadata(fc, steps=5)
+                _player_html, _player_height = controllable_gif_html(
+                    gif, json.dumps(_frame_metadata, ensure_ascii=False))
+                components.html(_player_html, height=_player_height, scrolling=False)
             st.caption("Arranca en el estado OBSERVADO de hoy y recorre la biomasa algal prevista a "
                        "1, 3, 5 y 7 días sobre la misma escena (se reproduce en bucle, como un "
                        "pronóstico del clima). La textura espacial viene de la escena actual; lo que "
-                       "cambia entre cuadros es el NIVEL. A +1 y +7 días es nivel de cuerpo repartido "
-                       "por el patrón actual; a +3 y +5 el gradiente lo aporta el modelo espectral.")
+                       "cambia entre cuadros es el NIVEL. En todos los horizontes el detalle espacial "
+                       "es una desagregación heurística del patrón actual, no un pronóstico por píxel. "
+                       "La barra de color conserva la MISMA escala absoluta en todos los cuadros para "
+                       "que el cambio entre días sea comparable.")
         else:
             st.info("No se pudo generar la animación para esta escena.")
 
-    # ELEMENTOS 3 y 4: alerta + banda de incertidumbre
-    cA, cB = st.columns(2)
-    with cA:
-        st.markdown("**Nivel de biomasa algal**")
-        nivel = hh["nivel"] if hh is not None else None
-        if nivel == "floracion":
-            st.error(f"🔴 FLORACION — chl-a prevista {hh['chl_pred']:.1f} µg/L (≥ {fc['thr_floracion']:.0f})")
-        elif nivel == "elevada":
-            st.warning(f"🟡 BIOMASA ELEVADA — chl-a prevista {hh['chl_pred']:.1f} µg/L "
-                       f"(≥ {fc['thr_elevada']:.0f})")
-        elif nivel is not None:
-            st.success(f"🟢 NORMAL — chl-a prevista {hh['chl_pred']:.1f} µg/L "
-                       f"(< {fc['thr_elevada']:.0f})")
-        st.caption(f"Area en floracion (≥ {stats['thr']:.0f} µg/L): **{stats['pct_alert']:.0f}%**  ·  "
-                   f"biomasa elevada (≥ {stats['thr_elev']:.0f}): **{stats['pct_elev']:.0f}%**  ·  "
-                   f"prob. anomalia (P85): {hh['prob_riesgo']*100:.0f}%")
-        # DOS señales distintas que pueden diverger de forma legitima (se explica para no confundir):
-        #  - NIVEL  = MAGNITUD de clorofila prevista vs umbral biologico (el banner de color de arriba).
-        #  - prob. anomalia = chance de un SALTO atipico para ESTE cuerpo (clasificador calibrado, P85).
-        # Un cuerpo cronicamente alto (embalse siempre con nata) puede dar NIVEL alto y prob. baja: ese
-        # nivel es SU normal, no una anomalia. Y al reves: magnitud normal con salto atipico probable.
-        if hh is not None:
-            _alerta = hh["prob_riesgo"] >= fc["alert_threshold"]
-            _alto = nivel in ("elevada", "floracion")
-            if _alto and not _alerta:
-                st.caption("ℹ️ *Nivel alto por **magnitud** de clorofila, pero **prob. de anomalía baja**: "
-                           "ese nivel es **habitual** en este cuerpo, no un salto atípico. Son medidas "
-                           "distintas — el nivel mide cuánta biomasa; la anomalía, si es inusual aquí.*")
-            elif (not _alto) and _alerta:
-                st.caption("ℹ️ *Magnitud prevista **normal**, pero el modelo marca **prob. de anomalía "
-                           "elevada** (posible cambio atípico): conviene vigilar. Son medidas distintas.*")
-    with cB:
-        st.markdown("**Clorofila-a prevista (intensidad)**")
-        if hh is not None:
-            banda = (f"P10–P90: {hh['p10']:.1f} – {hh['p90']:.1f} µg/L"
-                     if hh["p10"] is not None else "banda no disponible")
-            st.metric(f"clorofila-a media prevista (+{h} d)", f"{hh['chl_pred']:.1f} µg/L")
-            st.caption(f"Banda de incertidumbre calibrada (CQR ~80%) · {banda}")
+    # Sin animación, las tarjetas describen el horizonte elegido. Con animación, esas mismas
+    # lecturas viven dentro del reproductor y cambian con cada cuadro; no se duplica un valor fijo.
+    if not (animate and gif):
+        render_selected_horizon_cards(fc, hh, stats, h)
+    else:
+        st.caption("El nivel, la clorofila, la banda y la probabilidad se actualizan dentro del "
+                   "reproductor conforme avanza el día mostrado.")
 
     # ELEMENTOS DINAMICOS: trayectoria 0-7 d, medidor de riesgo y "¿por que?" (SHAP).
     # Todo reutiliza datos ya calculados (fc["horizons"], shap_importance.csv); no reentrena nada.
     st.divider()
     tab_tray, tab_gauge, tab_why = st.tabs(
-        ["📈 Trayectoria 0–7 días", "🎯 Medidor de riesgo", "🧠 ¿Por qué? (SHAP)"])
+        ["Trayectoria 0–7 días", "Medidor de riesgo", "¿Por qué? (SHAP)"])
     with tab_tray:
         st.plotly_chart(trajectory_figure(fc, h), use_container_width=True,
                         config={"displayModeBar": False})
@@ -701,9 +907,9 @@ if st.button("🔍 Analizar", type="primary", disabled=disabled):
         else:
             st.info("Explicabilidad SHAP no disponible. Genérala con `python explain_model.py`.")
 
-    # DESCARGAS: mapa PNG, animacion GIF (si se genero) y resumen CSV del pronostico.
+    # DESCARGAS: mapa PNG, animación GIF (si se generó) y resumen CSV del pronóstico.
     st.divider()
-    st.markdown("### 💾 Descargas")
+    st.markdown("### Descargas")
     # resumen CSV desde fc (todos los horizontes)
     _rows = ["horizonte_dias,chl_pred_ugL,p10_ugL,p90_ugL,prob_alerta,nivel"]
     for x in sorted(fc["horizons"], key=lambda z: z["horizon"]):
@@ -711,24 +917,24 @@ if st.button("🔍 Analizar", type="primary", disabled=disabled):
                      f"{'' if x['p10'] is None else round(x['p10'],2)},"
                      f"{'' if x['p90'] is None else round(x['p90'],2)},"
                      f"{x['prob_riesgo']:.4f},{LEVEL_LABEL.get(x['nivel'], x['nivel'])}")
-    _csv = ("# Pronostico de biomasa algal (clorofila-a) - NO confirma toxicidad; requiere "
-            "verificacion de campo\n"
+    _csv = ("# Pronóstico de biomasa algal (clorofila-a) - NO confirma toxicidad; requiere "
+            "verificación de campo\n"
             f"# cuerpo={wb} grupo={GROUP[wb]} escena_t0={fc['t0'].date()} "
             f"chl_actual_ugL={fc.get('chl0', float('nan')):.2f} "
             f"umbral_floracion_ugL={fc['thr_floracion']:.1f}\n" + "\n".join(_rows))
     dc1, dc2, dc3 = st.columns(3)
     with dc1:
-        st.download_button("🖼️ Mapa (PNG)", st.session_state.get("map_png", b""),
+        st.download_button("Mapa (PNG)", st.session_state.get("map_png", b""),
                            file_name=f"mapa_{wb}_h{h}_{fc['t0'].date()}.png", mime="image/png",
                            disabled=not st.session_state.get("map_png"), use_container_width=True)
     with dc2:
         _gif = st.session_state.get("anim_gif") if animate else None
-        st.download_button("🎬 Animación (GIF)", _gif or b"",
+        st.download_button("Animación (GIF)", _gif or b"",
                            file_name=f"animacion_{wb}_{fc['t0'].date()}.gif", mime="image/gif",
                            disabled=not _gif, use_container_width=True,
                            help=None if _gif else "Marca la casilla de animación y vuelve a Analizar.")
     with dc3:
-        st.download_button("📄 Pronóstico (CSV)", _csv.encode("utf-8"),
+        st.download_button("Pronóstico (CSV)", _csv.encode("utf-8"),
                            file_name=f"pronostico_{wb}_{fc['t0'].date()}.csv", mime="text/csv",
                            use_container_width=True)
 
@@ -736,4 +942,4 @@ if st.button("🔍 Analizar", type="primary", disabled=disabled):
     st.divider()
     st.info(DISCLAIMER)
     if wb in C.EXPLORATORY_BODIES:
-        st.caption("🔬 Cuerpo EXPLORATORIO: interpretar con cautela (sin validacion de campo 2023-2026).")
+        st.caption("Cuerpo EXPLORATORIO: interpretar con cautela (sin validación de campo 2023-2026).")

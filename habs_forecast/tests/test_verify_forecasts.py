@@ -15,6 +15,7 @@ LOG = pd.DataFrame([
     {"run_ts": "r", "water_body": "lab", "group": "freshwater", "t0": "2025-06-01",
      "horizon": 5, "chl_pred": 99.0, "p10": 1.0, "p90": 2.0, "riesgo": True},
 ])
+LOG["evaluation_mode"] = "operational"
 TARGET = pd.DataFrame([
     {"water_body": "lab", "fecha": "2025-01-02", "chl_ugl": 12.0},   # objetivo de h=1
     {"water_body": "lab", "fecha": "2025-01-04", "chl_ugl": 35.0},   # objetivo de h=3
@@ -26,6 +27,16 @@ def test_solo_madurados_se_verifican():
     detail, _ = VF.verify(LOG, TARGET, THR)
     assert len(detail) == 2                       # el h=5 sin target queda fuera
     assert set(detail["horizon"]) == {1, 3}
+
+
+def test_retroactivo_y_legacy_no_cuentan_como_operacional():
+    retrospective = LOG.assign(evaluation_mode="retrospective_in_sample")
+    detail, summary = VF.verify(retrospective, TARGET, THR)
+    assert detail.empty and summary.empty
+
+    legacy = LOG.drop(columns=["evaluation_mode"])
+    detail, summary = VF.verify(legacy, TARGET, THR)
+    assert detail.empty and summary.empty
 
 
 def test_error_y_banda():
@@ -85,11 +96,10 @@ def test_deduplica_reejecuciones():
 
 def test_far_con_falsa_alarma():
     """Una alerta emitida sobre un no-evento debe dar FAR=1 y POD=NaN (no hubo eventos).
-    La alerta se recomputa desde chl_pred vs umbral (no del flag guardado): subimos chl_pred
-    por encima del umbral (25) en el par h=1, cuyo real (12) NO es evento."""
+    Se evalua el flag realmente emitido, no una politica reconstruida a posteriori."""
     import pandas as pd
     log = LOG.copy()
-    log.loc[0, "chl_pred"] = 30.0                   # 30 >= thr 25 -> alerta; real=12 < 25 -> falsa
+    log.loc[0, "riesgo"] = True                    # alerta guardada; real=12 < 25 -> falsa
     _, summary = VF.verify(log, TARGET, THR)
     s1 = summary[summary.horizon == 1].iloc[0]
     assert s1["alertas_emitidas"] == 1 and s1["eventos_reales"] == 0

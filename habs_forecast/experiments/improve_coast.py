@@ -1,14 +1,14 @@
 """
-improve_coast.py — Gana potencia estadistica en la COSTA (Fonseca/Tampa), donde el skill
+improve_coast.py — Gana potencia estadística en la COSTA (Fonseca/Tampa), donde el skill
 no estaba establecido por pocos eventos (5-8 en n~85).
 
 Dos palancas:
   A) POOLING de grupo: un solo modelo marino entrenado con ambos cuerpos a la vez
-     (walk-forward expansivo a nivel de grupo) -> mas datos por fold que el per-cuerpo.
-  B) SENSIBILIDAD del umbral de evento: P70/P75/P80/P85 de la climatologia local ->
-     cuantos eventos y que Recall/PR-AUC resultan (mas eventos = mas potencia).
+     (walk-forward expansivo a nivel de grupo) -> más datos por fold que el per-cuerpo.
+  B) SENSIBILIDAD del umbral de evento: P70/P75/P80/P85 de la climatología local ->
+     cuántos eventos y qué Recall/PR-AUC resultan (más eventos = más potencia).
 
-Compara skill de regresion vs persistencia con bootstrap IC95% (pooled vs per-cuerpo).
+Compara skill de regresión vs persistencia con bootstrap IC95% (pooled vs per-cuerpo).
 """
 from __future__ import annotations
 import numpy as np
@@ -16,25 +16,18 @@ import pandas as pd
 import config as C
 from train import FEATURES, _model, _clf, PAIRS
 from evaluate_robust import _boot, _skill, _recall, _prauc, N_FOLDS, MIN_TRAIN_FRAC
+from temporal_validation import expanding_purged_splits
 
 TARGET = __import__("os").path.join(C.DIR_OUT, "targets", "satellite_chl_daily.csv")
 
 
 def group_expanding_oos(d):
     """Walk-forward expansivo a NIVEL DE GRUPO: entrena un modelo con todos los cuerpos
-    hasta T, predice el bloque futuro. Pool natural -> mas datos."""
-    d = d.sort_values("fecha_t0").reset_index(drop=True)
-    N = len(d); start = int(N * MIN_TRAIN_FRAC)
-    if N - start < N_FOLDS * 4:
-        return pd.DataFrame()
-    fold = (N - start) // N_FOLDS
+    hasta T, predice el bloque futuro. Pool natural -> más datos."""
     out = []
-    for k in range(N_FOLDS):
-        a = start + k * fold
-        b = N if k == N_FOLDS - 1 else a + fold
-        tr, te = d.iloc[:a], d.iloc[a:b]
-        if len(te) < 3 or len(tr) < 20:
-            continue
+    for tr, te, _ in expanding_purged_splits(
+            d, n_splits=N_FOLDS, min_train_frac=MIN_TRAIN_FRAC,
+            min_train=20, min_test=3):
         reg = _model().fit(tr[FEATURES], tr["log_chl_target"])
         proba = np.full(len(te), np.nan)
         if tr["hab_target"].nunique() > 1:
@@ -82,7 +75,7 @@ def main():
             line += f"  P{p}(ev={int(hab.sum())},Rec={rec[0]:.2f})"
         print(line)
 
-    print("\nLectura: si el skill pooled gana significancia (IC no cruza 0) o un percentil mas bajo")
+    print("\nLectura: si el skill pooled gana significancia (IC no cruza 0) o un percentil más bajo")
     print("da suficientes eventos con Recall razonable, ese es el ajuste recomendado para costa.")
 
 

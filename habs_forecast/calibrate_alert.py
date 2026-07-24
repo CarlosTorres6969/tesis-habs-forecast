@@ -1,80 +1,111 @@
-"""
-calibrate_alert.py — Calibra la probabilidad de alerta y fija el UMBRAL OPERATIVO.
+"""Reajusta el calibrador operativo sin reutilizar sus datos para reportar desempeño.
 
-Problema: con umbral fijo 0.5 el sistema casi nunca dispara (eventos raros, probas bajas).
-Solucion:
-  1. Genera probabilidades del ENSAMBLE (XGB+Red) FUERA DE MUESTRA (ventana expansiva).
-  2. CALIBRA (isotonica) prob -> frecuencia real de floracion.
-  3. Elige el UMBRAL OPERATIVO maximizando F-beta (beta=2, prioriza recall: en alerta
-     temprana perder un bloom cuesta mas que una falsa alarma).
-Guarda calibrador + umbral por grupo -> usado por predict.py.
-
-Salida: artifacts/models/alert_calib_{grupo}.pkl
+El umbral F2 que se despliega fue seleccionado dentro de DEV por ``evaluate_nested.py`` y
+validado una sola vez en su TEST temporal. Este script solo reajusta la curva isotónica de
+producción con predicciones OOS purgadas de todo el histórico; sus métricas impresas son un
+diagnóstico de ajuste, no las cifras de eficacia que se citan en la tesis.
 """
 from __future__ import annotations
-import os, joblib
+
+import json
+import os
+
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import precision_recall_fscore_support
+
 import config as C
-from train import FEATURES, PAIRS
+from train import PAIRS, get_features
 from train_stack import oos_both
+from temporal_validation import apply_event_thresholds
 
 MODELS = C.DIR_MODELS
-BETA = 2.0          # >1 prioriza recall
+NESTED = os.path.join(C.DIR_REPORTS, "nested_metrics.json")
+BETA = 2.0
 
 
-def fbeta(p, r, beta=BETA):
-    if p + r == 0:
+def fbeta(precision, recall, beta=BETA):
+    if precision + recall == 0:
         return 0.0
     b2 = beta * beta
-    return (1 + b2) * p * r / (b2 * p + r + 1e-12)
+    return (1 + b2) * precision * recall / (b2 * precision + recall + 1e-12)
+
+
+def _fallback_threshold(y, probability):
+    best_threshold, best_score = 0.5, -1.0
+    for threshold in np.linspace(0.01, 0.95, 95):
+        precision, recall, _, _ = precision_recall_fscore_support(
+            y, (probability >= threshold).astype(int),
+            average="binary", zero_division=0)
+        score = fbeta(precision, recall)
+        if score > best_score:
+            best_threshold, best_score = float(threshold), float(score)
+    return best_threshold
 
 
 def main():
-    df = pd.read_csv(PAIRS, parse_dates=["fecha_t0"])
-    feats = [f for f in FEATURES if f in df.columns]
+    df = pd.read_csv(PAIRS, parse_dates=["fecha_t0", "fecha_target"])
+    nested = json.load(open(NESTED, encoding="utf-8")) if os.path.exists(NESTED) else {}
+
     for group in ("freshwater", "marine"):
-        # pool de probabilidades OOS del ensamble sobre todos los horizontes
-        probs, labels = [], []
-        for h in [1, 3, 5, 7]:
-            P = oos_both(df[(df["group"] == group) & (df["horizon"] == h)], feats)
-            if not len(P):
+        parts = []
+        for horizon in [1, 3, 5, 7]:
+            data = df[(df["group"] == group) & (df["horizon"] == horizon)]
+            node = nested.get(group, {}).get(str(horizon), {})
+            event_thresholds = node.get("event_thresholds_from_dev")
+            if not event_thresholds:
+                raise RuntimeError(
+                    f"Faltan umbrales validados para {group} +{horizon}d"
+                )
+            data = apply_event_thresholds(data, event_thresholds)
+            feats = get_features(group, horizon, data.columns, required=True)
+            predictions = oos_both(data, feats)
+            if predictions.empty:
                 continue
-            cm = np.isfinite(P["xgb_proba"].values) & np.isfinite(P["nn_proba"].values)
-            ens = 0.5 * P["xgb_proba"].values[cm] + 0.5 * P["nn_proba"].values[cm]
-            probs.append(ens); labels.append(P["hab"].values[cm])
-        if not probs:
+            mask = np.isfinite(predictions["xgb_proba"]) & np.isfinite(predictions["nn_proba"])
+            part = predictions.loc[mask, ["hab"]].copy()
+            part["probability"] = (
+                0.5 * predictions.loc[mask, "xgb_proba"].to_numpy()
+                + 0.5 * predictions.loc[mask, "nn_proba"].to_numpy()
+            )
+            parts.append(part)
+        if not parts:
             continue
-        prob = np.concatenate(probs); y = np.concatenate(labels).astype(int)
 
-        # calibracion isotonica (prob OOS -> frecuencia real)
-        iso = IsotonicRegression(out_of_bounds="clip").fit(prob, y)
-        pcal = iso.predict(prob)
+        pooled = pd.concat(parts, ignore_index=True)
+        probability = pooled["probability"].to_numpy()
+        y = pooled["hab"].to_numpy(dtype=int)
+        iso = IsotonicRegression(out_of_bounds="clip").fit(probability, y)
+        calibrated = iso.predict(probability)
 
-        # umbral operativo: maximiza F-beta
-        grid = np.linspace(0.05, 0.95, 91)
-        best_t, best_f = 0.5, -1
-        for t in grid:
-            pr, rc, _, _ = precision_recall_fscore_support(
-                y, (pcal >= t).astype(int), average="binary", zero_division=0)
-            fb = fbeta(pr, rc)
-            if fb > best_f:
-                best_f, best_t = fb, t
-        pr, rc, f1, _ = precision_recall_fscore_support(
-            y, (pcal >= best_t).astype(int), average="binary", zero_division=0)
-        # comparacion con umbral 0.5 sin calibrar
-        pr0, rc0, _, _ = precision_recall_fscore_support(
-            y, (prob >= 0.5).astype(int), average="binary", zero_division=0)
+        validation = nested.get(group, {}).get("alert_calibration") or {}
+        threshold = validation.get("threshold_selected_in_dev")
+        source = "nested_development_only"
+        if threshold is None:
+            threshold = _fallback_threshold(y, calibrated)
+            source = "fallback_oos_refit_not_independently_validated"
 
-        joblib.dump({"iso": iso, "threshold": float(best_t), "beta": BETA},
-                    os.path.join(MODELS, f"alert_calib_{group}.pkl"))
-        print(f"\n=== {group} | n={len(y)} eventos={y.sum()} ===")
-        print(f"  ANTES (prob>=0.5 sin calibrar): recall={rc0:.2f} precision={pr0:.2f}")
-        print(f"  DESPUES (calibrado, umbral={best_t:.2f}): recall={rc:.2f} "
-              f"precision={pr:.2f} F{BETA:.0f}={best_f:.2f}")
-    print(f"\nCalibradores -> {MODELS}")
+        precision, recall, _, _ = precision_recall_fscore_support(
+            y, (calibrated >= threshold).astype(int),
+            average="binary", zero_division=0)
+        artifact = {
+            "iso": iso,
+            "threshold": float(threshold),
+            "beta": BETA,
+            "threshold_source": source,
+            "n_oos_refit": int(len(y)),
+            "validated_test_metrics": validation,
+            "label_source": "nested_development_only_per_horizon",
+        }
+        joblib.dump(artifact, os.path.join(MODELS, f"alert_calib_{group}.pkl"))
+        print(f"\n=== {group} | reajuste OOS purgado n={len(y)} eventos={int(y.sum())} ===")
+        print(f"  umbral={threshold:.2f} ({source})")
+        print(f"  diagnóstico de ajuste, NO desempeño final: recall={recall:.2f} precision={precision:.2f}")
+
+    print(f"\nCalibradores operativos -> {MODELS}")
+    print("Las métricas defendibles proceden del TEST de nested_metrics.json.")
 
 
 if __name__ == "__main__":

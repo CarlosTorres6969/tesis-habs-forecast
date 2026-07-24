@@ -56,6 +56,11 @@ def verify(log_df, target_df, thr_body):
     contar el mismo pronostico varias veces (inflaria n y sesgaria MAE/POD/FAR) y para que la
     verificacion sea idempotente frente a re-ejecuciones o backfill."""
     log_df = log_df.copy()
+    if "evaluation_mode" not in log_df.columns:
+        log_df["evaluation_mode"] = "legacy_unknown"
+    # Un backfill con el modelo final vio etiquetas posteriores a su t0; las filas
+    # heredadas sin procedencia tampoco pueden presumirse prospectivas/OOS.
+    log_df = log_df[log_df["evaluation_mode"].fillna("legacy_unknown") == "operational"]
     log_df["t0"] = pd.to_datetime(log_df["t0"]).dt.normalize()
     if "run_ts" in log_df.columns:
         log_df = (log_df.sort_values("run_ts")
@@ -73,18 +78,18 @@ def verify(log_df, target_df, thr_body):
         fecha_real, chl_real = _match_real(tgt_by_body[wb], r["t0"], h)
         if chl_real is None:
             continue                                  # aun no madura -> no verificable
-        thr = C.alert_threshold_ugl(thr_body.get(wb, C.THRESHOLDS["moderate"]))  # mismo umbral que la alerta
+        stored_threshold = r.get("event_threshold_ugl")
+        thr = (float(stored_threshold) if pd.notna(stored_threshold)
+               else float(thr_body.get(wb, C.THRESHOLDS["moderate"])))
         p10, p90 = r.get("p10"), r.get("p90")
         in_band = (pd.notna(p10) and pd.notna(p90) and float(p10) <= chl_real <= float(p90))
         event_real = bool(chl_real >= thr)
-        # La alerta se RECOMPUTA desde chl_pred vs el umbral ACTUAL del cuerpo, NO se toma el flag
-        # 'riesgo' guardado: la bitacora se acumula por apend a lo largo de versiones del codigo y la
-        # DEFINICION de alerta pudo cambiar (p.ej. de prob-clasificador a nivel de biomasa), dejando
-        # flags historicos inconsistentes. chl_pred es una salida estable del modelo; recomputar aqui
-        # evalua una politica de alerta UNICA y consistente (simetrico con event_real, que ya se
-        # recomputa desde chl_real). Fallback al flag guardado solo si faltara chl_pred.
-        chl_pred = r.get("chl_pred")
-        alerta_pred = (bool(float(chl_pred) >= thr) if pd.notna(chl_pred) else bool(r["riesgo"]))
+        # Se evalua exactamente la alerta que fue emitida, con el umbral de evento
+        # versionado en esa misma fila. No se reescribe retrospectivamente la politica.
+        stored_alert = r.get("alerta_anomalia")
+        if pd.isna(stored_alert):
+            stored_alert = r.get("riesgo", False)
+        alerta_pred = bool(stored_alert) if pd.notna(stored_alert) else False
         rows.append({
             "run_ts": r.get("run_ts"), "water_body": wb, "group": r.get("group"),
             "t0": r["t0"].date().isoformat(), "horizon": h,
@@ -158,8 +163,14 @@ def main():
     os.makedirs(C.DIR_REPORTS, exist_ok=True)
     n_log = len(log_df)
     if detail.empty:
-        print(f"Bitacora: {n_log} pronosticos. Ninguno MADURADO aun "
-              f"(target real t0+h todavia no disponible). Vuelve a correr cuando haya datos.")
+        n_operational = (int(log_df["evaluation_mode"].eq("operational").sum())
+                         if "evaluation_mode" in log_df else 0)
+        if n_operational == 0:
+            print(f"Bitacora: {n_log} filas, pero ninguna tiene procedencia operacional "
+                  "verificable (las legacy/backfill se excluyen).")
+        else:
+            print(f"Bitacora: {n_log} pronosticos ({n_operational} operacionales). "
+                  "Ninguno ha madurado aun con target real t0+h.")
         return
     detail.to_csv(OUT_DETAIL, index=False)
     summary.to_csv(OUT_SUMMARY, index=False)

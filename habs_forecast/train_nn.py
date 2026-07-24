@@ -1,20 +1,20 @@
 """
-train_nn.py — RED NEURONAL multitarea para pronostico temprano de HAB (modelo central).
+train_nn.py — RED NEURONAL multitarea para pronóstico temprano de HAB (modelo central).
 
-Aplica el titulo de la tesis: red neuronal sobre analisis multiespectral (+ clima + in-situ).
-Disenada para el tamano de datos (~2600 pares) con regularizacion fuerte:
+Aplica el título de la tesis: red neuronal sobre análisis multiespectral (+ clima + in-situ).
+Diseñada para el tamaño de datos (~2600 pares) con regularización fuerte:
 
   Arquitectura (multitarea, un tronco compartido):
     entrada (espectral S2 + autorregresivo chl + ERA5 + in-situ)
       -> [Linear-BatchNorm-ReLU-Dropout] x2  (tronco)
-      -> cabeza REGRESION  : log(chl) en t0+h   (intensidad)
-      -> cabeza ALERTA     : prob. de floracion (sigmoide)
-    perdida = MSE(intensidad) + lambda * BCE(alerta)
+      -> cabeza REGRESIÓN  : log(chl) en t0+h   (intensidad)
+      -> cabeza ALERTA     : prob. de floración (sigmoide)
+    pérdida = MSE(intensidad) + lambda * BCE(alerta)
 
-  Regularizacion: BatchNorm + Dropout 0.3 + weight_decay + EARLY STOPPING (val interna).
+  Regularización: BatchNorm + Dropout 0.3 + weight_decay + EARLY STOPPING (val interna).
   Datos: estandarizados + imputados (fit solo en train, sin fuga).
-  Evaluacion: ventana expansiva a nivel de grupo (mas datos para la red) + bootstrap IC95%,
-  mismo protocolo que XGBoost -> comparacion justa. Modelo SEPARADO por horizonte.
+  Evaluación: ventana expansiva a nivel de grupo (más datos para la red) + bootstrap IC95%,
+  mismo protocolo que XGBoost -> comparación justa. Modelo SEPARADO por horizonte.
 """
 from __future__ import annotations
 import os, json
@@ -28,21 +28,22 @@ from sklearn.metrics import mean_squared_error, average_precision_score, recall_
 import config as C
 from train import FEATURES, PAIRS
 from evaluate_robust import _boot, N_FOLDS, MIN_TRAIN_FRAC
+from temporal_validation import expanding_purged_splits
 
 torch.manual_seed(C.RANDOM_STATE)
 np.random.seed(C.RANDOM_STATE)
 OUT = os.path.join(C.DIR_REPORTS, "nn_metrics.json")
-LAMBDA_CLS = 0.5          # peso de la cabeza de alerta en la perdida
+LAMBDA_CLS = 0.5          # peso de la cabeza de alerta en la pérdida
 MAX_EPOCHS, PATIENCE = 400, 30
-N_SEEDS_FIT = 3           # entrena varias inicializaciones y CONSERVA la mejor por validacion
+N_SEEDS_FIT = 3           # entrena varias inicializaciones y CONSERVA la mejor por validación
                           # interna: reduce la varianza por semilla desafortunada (las MLP
-                          # pequenas son sensibles a la init). NO cambia arquitectura ni contrato:
-                          # _fit sigue devolviendo UNA red / un state_dict, asi que train_final y
+                          # pequeñas son sensibles a la init). NO cambia arquitectura ni contrato:
+                          # _fit sigue devolviendo UNA red / un state_dict, así que train_final y
                           # predict no cambian y los .pt ya guardados siguen cargando igual.
 
 
 class HABNet(nn.Module):
-    """Red multitarea: tronco compartido + cabeza de regresion y de alerta."""
+    """Red multitarea: tronco compartido + cabeza de regresión y de alerta."""
     def __init__(self, n_in, hidden=(64, 32), p=0.3):
         super().__init__()
         layers, d = [], n_in
@@ -59,8 +60,8 @@ class HABNet(nn.Module):
 
 
 def _fit_seed(Xt, yt, ct, Xv, yv, cv, n_in, seed, has_val):
-    """Entrena UNA red desde una inicializacion (semilla) concreta con early stopping.
-    Devuelve (red, mejor_vloss). Aislar la semilla aqui permite probar varias inits."""
+    """Entrena UNA red desde una inicialización (semilla) concreta con early stopping.
+    Devuelve (red, mejor_vloss). Aislar la semilla aquí permite probar varias inits."""
     torch.manual_seed(seed)
     net = HABNet(n_in)
     opt = torch.optim.Adam(net.parameters(), lr=5e-3, weight_decay=1e-3)
@@ -88,9 +89,9 @@ def _fit_seed(Xt, yt, ct, Xv, yv, cv, n_in, seed, has_val):
 
 
 def _fit(Xtr, ytr, ctr, n_in):
-    """Entrena con early stopping sobre un 15% de validacion interna. Para robustez a la semilla
-    (las MLP pequenas dependen de la init) entrena N_SEEDS_FIT inicializaciones y CONSERVA la
-    mejor por perdida de validacion interna. Sigue devolviendo UNA red (mismo contrato de antes:
+    """Entrena con early stopping sobre un 15% de validación interna. Para robustez a la semilla
+    (las MLP pequeñas dependen de la init) entrena N_SEEDS_FIT inicializaciones y CONSERVA la
+    mejor por pérdida de validación interna. Sigue devolviendo UNA red (mismo contrato de antes:
     train_final guarda un state_dict, predict carga uno; nada aguas abajo cambia)."""
     n = len(Xtr); idx = np.arange(n); rng = np.random.default_rng(C.RANDOM_STATE)
     rng.shuffle(idx)
@@ -107,26 +108,19 @@ def _fit(Xtr, ytr, ctr, n_in):
     best_net, best_v = None, float("inf")
     for s in range(max(1, N_SEEDS_FIT)):
         net, v = _fit_seed(Xt, yt, ct, Xv, yv, cv, n_in, C.RANDOM_STATE + s, has_val)
-        if v < best_v:                              # conserva la init con mejor validacion
+        if v < best_v:                              # conserva la init con mejor validación
             best_v, best_net = v, net
     return best_net
 
 
 def group_oos(d, feats):
-    """Ventana expansiva a nivel de grupo -> predicciones OOS (red)."""
-    d = d.sort_values("fecha_t0").reset_index(drop=True)
-    N = len(d); start = int(N * MIN_TRAIN_FRAC)
-    if N - start < N_FOLDS * 4:
-        return pd.DataFrame()
-    fold = (N - start) // N_FOLDS
+    """Ventana expansiva agrupada y purgada -> predicciones OOS (red)."""
     rows = []
-    for k in range(N_FOLDS):
-        a = start + k * fold
-        b = N if k == N_FOLDS - 1 else a + fold
-        tr, te = d.iloc[:a], d.iloc[a:b]
-        if len(te) < 3 or len(tr) < 30:
-            continue
-        imp = SimpleImputer().fit(tr[feats]); sc = StandardScaler().fit(imp.transform(tr[feats]))
+    for tr, te, _ in expanding_purged_splits(
+            d, n_splits=N_FOLDS, min_train_frac=MIN_TRAIN_FRAC,
+            min_train=30, min_test=3):
+        imp = SimpleImputer(keep_empty_features=True).fit(tr[feats])
+        sc = StandardScaler().fit(imp.transform(tr[feats]))
         Xtr = sc.transform(imp.transform(tr[feats]))
         Xte = sc.transform(imp.transform(te[feats]))
         net = _fit(Xtr, tr["log_chl_target"].values, tr["hab_target"].values.astype(float), len(feats))
@@ -154,7 +148,7 @@ def _prauc(h, p):
 
 
 def main():
-    df = pd.read_csv(PAIRS, parse_dates=["fecha_t0"])
+    df = pd.read_csv(PAIRS, parse_dates=["fecha_t0", "fecha_target"])
     feats = [f for f in FEATURES if f in df.columns]
     report = {}
     for group in ("freshwater", "marine"):

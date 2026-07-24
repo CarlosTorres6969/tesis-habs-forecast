@@ -1,12 +1,12 @@
 """
-explain_model.py — EXPLICABILIDAD (SHAP) del modelo de INTENSIDAD en produccion.
+explain_model.py — EXPLICABILIDAD (SHAP) del modelo de INTENSIDAD en producción.
 
-Para cada (grupo, horizonte) carga el regresor XGBoost de produccion (train_final.py) y
+Para cada (grupo, horizonte) carga el regresor XGBoost de producción (train_final.py) y
 calcula la importancia SHAP de cada feature sobre TODOS los pares del grupo/horizonte:
   - shap_importance(reg, X) -> DataFrame [feature, mean_abs_shap] (PURO/testeable).
-El regresor de intensidad es el backbone del pronostico Y de la ALERTA operativa
-(riesgo = chl_pred >= umbral del cuerpo), asi que explicar SU salida responde la pregunta
-de tesis "¿que variables mandan en el pronostico?" de forma defendible.
+El regresor de intensidad es el backbone del pronóstico Y de la ALERTA operativa
+(riesgo = chl_pred >= umbral del cuerpo), así que explicar SU salida responde la pregunta
+de tesis "¿qué variables mandan en el pronóstico?" de forma defendible.
 
 Es ADITIVO: NO reentrena ni sobrescribe modelos; solo LEE artifacts/models/*.pkl y escribe
 un reporte + figuras. Si falta shap, un modelo o los pares, degrada con gracia (avisa/omite).
@@ -44,7 +44,7 @@ def shap_importance(reg, X):
 
 
 def _beeswarm(reg, X, path, title):
-    """Beeswarm SHAP (efecto y direccion por feature). Headless-safe (backend Agg)."""
+    """Beeswarm SHAP (efecto y dirección por feature). Headless-safe (backend Agg)."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -98,14 +98,14 @@ def main():
                 print(f"   (aviso: no se pudo graficar {group} h{h}: {e})")
 
     if not rows:
-        print("No se encontraron modelos de produccion para explicar."); return
+        print("No se encontraron modelos de producción para explicar."); return
     out = pd.concat(rows, ignore_index=True)
     os.makedirs(C.DIR_REPORTS, exist_ok=True)
     out.to_csv(OUT_CSV, index=False)
     print(f"\nImportancia SHAP -> {OUT_CSV}")
     print(f"Figuras beeswarm  -> {FIGDIR}")
-    print("\nLectura: mean_abs_shap = cuanto MUEVE cada feature el log-chl pronosticado (magnitud "
-          "media del efecto). El beeswarm muestra ademas la DIRECCION (rojo=valor alto). Corto "
+    print("\nLectura: mean_abs_shap = cuánto MUEVE cada feature el log-chl pronosticado (magnitud "
+          "media del efecto). El beeswarm muestra además la DIRECCIÓN (rojo=valor alto). Corto "
           "plazo suele dominar el autorregresivo (chl reciente); largo plazo, meteo/in-situ.")
 
 

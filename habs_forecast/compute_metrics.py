@@ -1,15 +1,15 @@
 """
-compute_metrics.py — RMSE y R2 del modelo sobre el TEST INTACTO (numeros crudos).
+compute_metrics.py — RMSE y R2 del modelo sobre el TEST INTACTO (números crudos).
 
-Lee las predicciones de la validacion anidada (artifacts/reports/nested_test_predictions.csv,
+Lee las predicciones de la validación anidada (artifacts/reports/nested_test_predictions.csv,
 generado por evaluate_nested.py) y calcula RMSE y R2 por (grupo, horizonte) y global, en:
   - log-chl (espacio del modelo) y
-  - ug/L (escala fisica interpretable).
-Tambien el RMSE/R2 de la PERSISTENCIA (baseline) para contexto.
+  - ug/L (escala física interpretable).
+También el RMSE/R2 de la PERSISTENCIA (baseline) para contexto.
 
 NB: R2 sobre el test intacto puede ser bajo o negativo a horizonte largo (es lo esperable en
-pronostico de eventos raros/ruidosos); el SKILL vs persistencia es la metrica titular. Aqui se
-dan RMSE/R2 para completar el cuadro estadistico.
+pronóstico de eventos raros/ruidosos); el SKILL vs persistencia es la métrica titular. Aquí se
+dan RMSE/R2 para completar el cuadro estadístico.
 
 Uso:  python compute_metrics.py
 """
@@ -30,7 +30,7 @@ def _row(label, y, yhat, yper, yclim=None):
     rmse_p = float(np.sqrt(mean_squared_error(y, yper)))
     row = {"grupo_horizonte": label, "n": len(y),
            "RMSE": round(rmse, 3), "R2": round(r2, 3), "RMSE_persist": round(rmse_p, 3)}
-    if yclim is not None:                              # baseline de climatologia (donde hay historia)
+    if yclim is not None:                              # baseline de climatología (donde hay historia)
         m = np.isfinite(np.asarray(yclim, dtype="float64"))
         row["RMSE_clim"] = (round(float(np.sqrt(mean_squared_error(y[m], np.asarray(yclim)[m]))), 3)
                             if m.sum() >= 3 else float("nan"))
@@ -38,9 +38,9 @@ def _row(label, y, yhat, yper, yclim=None):
 
 
 def _add_climatology(d):
-    """Anade una CLIMATOLOGIA CAUSAL como segundo baseline (ademas de persistencia): para cada
-    par, la media de log-chl del cuerpo sobre TODO su historico ESTRICTAMENTE anterior a t0
-    (media expansiva; sin fuga). Es el 'no sabe nada de la dinamica, solo el nivel tipico del
+    """Añade una CLIMATOLOGÍA CAUSAL como segundo baseline (además de persistencia): para cada
+    par, la media de log-chl del cuerpo sobre TODO su histórico ESTRICTAMENTE anterior a t0
+    (media expansiva; sin fuga). Es el 'no sabe nada de la dinámica, solo el nivel típico del
     cuerpo' — baseline obligatorio junto a persistencia (config.BASELINES). Si no hay
     combined_target, devuelve d sin las columnas (compute_metrics degrada con gracia)."""
     tgt = os.path.join(C.DIR_OUT, "targets", "combined_target.csv")
@@ -72,7 +72,7 @@ def main():
     if not os.path.exists(PRED):
         print(f"Falta {PRED}. Corre evaluate_nested.py primero."); return
     d = pd.read_csv(PRED)
-    d = _add_climatology(d)                            # segundo baseline: climatologia causal
+    d = _add_climatology(d)                            # segundo baseline: climatología causal
     has_clim = "log_chl_clim" in d.columns
     grp_name = {"freshwater": "Lagos", "marine": "Costa"}
 
@@ -102,7 +102,7 @@ def main():
     print("=" * 70)
     print(log_df.to_string(index=False))
     print("\n" + "=" * 70)
-    print("RMSE y R2 sobre el TEST INTACTO  —  escala FISICA (ug/L)")
+    print("RMSE y R2 sobre el TEST INTACTO  —  escala FÍSICA (ug/L)")
     print("=" * 70)
     print(ugl_df.to_string(index=False))
 
@@ -110,8 +110,8 @@ def main():
     out.to_csv(OUT, index=False)
     print(f"\n-> {OUT}")
     print("\nLectura: el modelo gana cuando RMSE < RMSE_persist Y RMSE_clim (dos baselines: "
-          "persistencia = 'manana como hoy'; climatologia = 'nivel tipico del cuerpo'). R2 en log "
-          "es la bondad de ajuste; en ug/L baja por la asimetria/picos. Metrica titular = SKILL "
+          "persistencia = 'mañana como hoy'; climatología = 'nivel típico del cuerpo'). R2 en log "
+          "es la bondad de ajuste; en ug/L baja por la asimetría/picos. Métrica titular = SKILL "
           "(1 - RMSE/RMSE_baseline).")
 
 

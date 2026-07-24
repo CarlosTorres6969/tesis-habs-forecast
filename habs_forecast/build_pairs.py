@@ -1,17 +1,17 @@
 """
-build_pairs.py — Reconstruye PARES CAUSALES limpios para pronostico 0-7 d.
+build_pairs.py — Reconstruye PARES CAUSALES limpios para pronóstico 0-7 d.
 
 Toma datasets/pares_predictivos.csv (estructura t -> t+gap ya existente) y:
   1. Separa PREDICTORES (estado en t, sufijo _prev) del TARGET (estado en t+gap).
   2. ELIMINA fugas:
        - delta_*  : se calculan como (actual - prev) => usan el futuro. LEAKAGE.
-       - chl_actual : es el target de regresion, no puede ser feature.
+       - chl_actual : es el target de regresión, no puede ser feature.
        - NDVI/NDWI como predictor (solo mascara/QA, ver config).
-  3. Asigna cuerpo de agua (water_body) y grupo ecologico (freshwater/marine)
-     por bounding-box, para validacion Leave-One-Water-Body-Out por tipo.
-  4. Asigna un horizonte nominal (0,1,3,5,7) al gap real via HORIZON_TOLERANCE.
+  3. Asigna cuerpo de agua (water_body) y grupo ecológico (freshwater/marine)
+     por bounding-box, para validación Leave-One-Water-Body-Out por tipo.
+  4. Asigna un horizonte nominal (0,1,3,5,7) al gap real vía HORIZON_TOLERANCE.
   5. Guarda artifacts/pairs/pairs_clean.csv e imprime el chequeo de realidad
-     (cuantos pares utiles por grupo y horizonte).
+     (cuántos pares útiles por grupo y horizonte).
 
 NO entrena nada. Solo deja los datos en forma honesta.
 """
@@ -29,7 +29,7 @@ OUT = os.path.join(C.DIR_PAIRS, "pairs_clean.csv")
 # Cuerpos de agua derivados de los clusters reales del dataset (bounding boxes).
 #   freshwater: yojoa (HND), okeechobee (USA)
 #   marine/estuarino: pensacola_est, ne_florida_est (USA) -- usados como costa vs costa
-#   (Cajon/Fonseca/Tampa tienen muy pocos pares aqui; entran si caen en sus cajas.)
+#   (Cajon/Fonseca/Tampa tienen muy pocos pares aquí; entran si caen en sus cajas.)
 # box = (lat_min, lat_max, lon_min, lon_max)
 # --------------------------------------------------------------------------------------
 WATER_BODIES = [
@@ -71,9 +71,9 @@ def build():
 
     # --- features predictoras: estado en t (sufijo _prev), SIN fugas ---
     leak_cols = [c for c in df.columns if c.startswith("delta_")]
-    leak_cols += ["chl_actual"]  # target de regresion
+    leak_cols += ["chl_actual"]  # target de regresión
     prev_cols = [c for c in df.columns if c.endswith("_prev")]
-    # quitar NDVI/NDWI _prev como predictor (solo QA); chl_anterior SI es predictor valido
+    # quitar NDVI/NDWI _prev como predictor (solo QA); chl_anterior SÍ es predictor válido
     drop_prev = [c for c in prev_cols if c.startswith(("NDVI", "NDWI"))]
     feat_cols = [c for c in prev_cols if c not in drop_prev]
 
@@ -82,7 +82,7 @@ def build():
             + feat_cols + ["chl_actual", "hab_target"])
     clean = df[keep].copy()
 
-    # target de regresion en log (chl es lognormal)
+    # target de regresión en log (chl es lognormal)
     clean["log_chl_target"] = np.log1p(clean["chl_actual"].clip(lower=0))
     clean = clean.rename(columns={"chl_actual": "chl_target"})
 
@@ -109,7 +109,7 @@ def build():
                                  values="hab_target", aggfunc="mean").round(2)
         print(tab2.to_string())
     else:
-        print("  (ningun par cae en 0-8 dias -> confirma el muro de factibilidad)")
+        print("  (ningún par cae en 0-8 días -> confirma el muro de factibilidad)")
 
     print("\n=== Cuerpos de agua (todos los gaps) ===")
     print(clean.groupby(["group", "water_body"]).size().to_string())

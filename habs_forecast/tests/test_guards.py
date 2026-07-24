@@ -46,3 +46,13 @@ def test_peor_condicion_manda():
 
 def test_worst_confidence_vacio_es_ok():
     assert guards.worst_confidence([]) == "OK"
+
+
+def test_target_viejo_y_contexto_faltante_se_reportan():
+    conf, flags, _ = guards.evaluate_guards(
+        "okeechobee", "2026-06-25", C.MIN_WATER_PIXELS + 100, RUN,
+        feature_ages={"target": C.MAX_TARGET_AGE_DAYS + 1},
+        missing_context=["ERA5"],
+    )
+    assert conf == "STALE_TARGET"
+    assert set(flags) == {"STALE_TARGET", "MISSING_CONTEXT"}

@@ -1,8 +1,8 @@
 """
-fetch_olci_chl.py — TARGET de clorofila Sentinel-3 OLCI 300 m (2023-2026) via openEO / CDSE.
+fetch_olci_chl.py — TARGET de clorofila Sentinel-3 OLCI 300 m (2023-2026) vía openEO / CDSE.
 
-Por que: VIIRS (750 m) es grueso para lagos pequenos (Yojoa, Cajon) y costa estrecha. OLCI
-a 300 m densifica/afina el target ahi. openEO agrega la clorofila por bbox EN EL SERVIDOR
+Por qué: VIIRS (750 m) es grueso para lagos pequeños (Yojoa, Cajon) y costa estrecha. OLCI
+a 300 m densifica/afina el target ahí. openEO agrega la clorofila por bbox EN EL SERVIDOR
 (no descarga escenas completas) -> sale una serie diaria por cuerpo.
 
   >>> REQUIERE TUS CREDENCIALES Copernicus Data Space (las de S2/ERA5). <<<
@@ -12,12 +12,12 @@ a 300 m densifica/afina el target ahi. openEO agrega la clorofila por bbox EN EL
     3. python fetch_olci_chl.py   (abre el navegador para autenticar la primera vez)
 
 Salida: artifacts/targets/olci_chl_daily.csv  (water_body, fecha, chl_ugl, group)
-Formato identico al target VIIRS -> en match_pairs.py basta apuntar TARGET_FILE a este csv,
-o concatenar ambos (VIIRS para cuerpos grandes, OLCI para lagos pequenos).
+Formato idéntico al target VIIRS -> en match_pairs.py basta apuntar TARGET_FILE a este csv,
+o concatenar ambos (VIIRS para cuerpos grandes, OLCI para lagos pequeños).
 
-NOTA: el id de coleccion y el nombre de banda de clorofila pueden variar segun el catalogo
-CDSE; verificar con connection.list_collections(). Aqui se usa la L2 Water (OC4ME/NN).
-Script NO probado en este entorno por requerir login; revisar la primera ejecucion.
+NOTA: el id de colección y el nombre de banda de clorofila pueden variar según el catálogo
+CDSE; verificar con connection.list_collections(). Aquí se usa la L2 Water (OC4ME/NN).
+Script NO probado en este entorno por requerir login; revisar la primera ejecución.
 """
 from __future__ import annotations
 import os
@@ -35,9 +35,10 @@ BODIES = {
     "cajon":      (-87.80, 14.70, -87.58, 14.95, "freshwater"),
     "fonseca":    (-87.85, 12.90, -87.35, 13.45, "marine"),
 }
-T0, T1 = "2023-01-01", "2026-06-30"
+T0 = os.environ.get("OLCI_T0", "2023-01-01")
+T1 = os.environ.get("OLCI_T1", pd.Timestamp.utcnow().date().isoformat())
 
-# Coleccion y banda de clorofila en CDSE (verificar con list_collections si falla):
+# Colección y banda de clorofila en CDSE (verificar con list_collections si falla):
 COLLECTION = "SENTINEL3_OLCI_L2_WATER"
 CHL_BAND = "CHL_NN"            # alternativa: "CHL_OC4ME"
 
@@ -46,12 +47,16 @@ def build():
     import openeo
     con = openeo.connect("openeo.dataspace.copernicus.eu").authenticate_oidc()
 
-    years = [("2023-01-01", "2023-12-31"), ("2024-01-01", "2024-12-31"),
-             ("2025-01-01", "2025-12-31"), ("2026-01-01", "2026-06-30")]
+    start, end = pd.Timestamp(T0), pd.Timestamp(T1)
+    years = [
+        (max(start, pd.Timestamp(f"{year}-01-01")).date().isoformat(),
+         min(end, pd.Timestamp(f"{year}-12-31")).date().isoformat())
+        for year in range(start.year, end.year + 1)
+    ]
     frames = []
     for name, (w, s, e, n, group) in BODIES.items():
         recs = []
-        for t0, t1 in years:                       # trocear por anio: evita el 500 de memoria
+        for t0, t1 in years:                       # trocear por año: evita el 500 de memoria
             try:
                 cube = (con.load_collection(
                             COLLECTION, spatial_extent={"west": w, "south": s, "east": e, "north": n},
@@ -71,7 +76,7 @@ def build():
         try:
             df = pd.DataFrame(recs, columns=["fecha", "raw"])
             raw = pd.to_numeric(df["raw"], errors="coerce")
-            is_log = (raw.min() < 0) or (raw.max() < 3)        # heuristica de escala log10
+            is_log = (raw.min() < 0) or (raw.max() < 3)        # heurística de escala log10
             df["chl_ugl"] = (10 ** raw) if is_log else raw
             print(f"      escala detectada: {'log10' if is_log else 'lineal'}")
             df["fecha"] = pd.to_datetime(df["fecha"]).dt.normalize()
@@ -79,7 +84,7 @@ def build():
             df = df[(df["chl_ugl"] > 0) & (df["chl_ugl"] < 2000)]
             df["water_body"] = name; df["group"] = group
             frames.append(df[["water_body", "fecha", "chl_ugl", "group"]])
-            print(f"  {name:12s}: {len(df)} dias OLCI")
+            print(f"  {name:12s}: {len(df)} días OLCI")
         except Exception as ex:
             print(f"  {name:12s}: FALLO {type(ex).__name__}: {ex}")
 
@@ -88,7 +93,7 @@ def build():
     out = pd.concat(frames, ignore_index=True).sort_values(["water_body", "fecha"])
     os.makedirs(OUT_DIR, exist_ok=True)
     out.to_csv(OUT, index=False)
-    print(f"\nTarget OLCI -> {OUT} ({len(out)} dias-cuerpo)")
+    print(f"\nTarget OLCI -> {OUT} ({len(out)} días-cuerpo)")
 
 
 if __name__ == "__main__":

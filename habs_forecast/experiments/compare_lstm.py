@@ -1,11 +1,11 @@
 """
-compare_lstm.py — Comparacion con LSTM (torch). Cierra la evaluacion de arquitecturas.
+compare_lstm.py — Comparación con LSTM (torch). Cierra la evaluación de arquitecturas.
 
-Diseno justo: LSTM sobre la secuencia reciente de clorofila [log(chl) en t0-7, t0-3, t0]
-concatenada con features estaticos (espectral + ERA5) en una capa densa final -> predice
+Diseño justo: LSTM sobre la secuencia reciente de clorofila [log(chl) en t0-7, t0-3, t0]
+concatenada con features estáticos (espectral + ERA5) en una capa densa final -> predice
 log(chl) en t0+h. Mismo protocolo OOS expansivo por cuerpo (agua dulce) que el resto.
 
-Hipotesis (Fase 1): con N~2600 y secuencias cortas/irregulares por nubosidad, las redes
+Hipótesis (Fase 1): con N~2600 y secuencias cortas/irregulares por nubosidad, las redes
 recurrentes no se justifican. Se espera skill <= XGBoost.
 """
 from __future__ import annotations
@@ -19,6 +19,7 @@ from sklearn.metrics import mean_squared_error
 import config as C
 from train import FEATURES, SPECTRAL, ERA5, PAIRS
 from evaluate_robust import _boot, N_FOLDS, MIN_TRAIN_FRAC
+from temporal_validation import expanding_purged_splits
 
 torch.manual_seed(C.RANDOM_STATE)
 SEQ = ["chl_lag7", "chl_lag3", "chl_t0"]          # secuencia temporal (3 pasos)
@@ -65,17 +66,9 @@ def _fit_predict(tr, te, stat_cols):
 def oos_lstm(d, stat_cols):
     ys, yh, yp = [], [], []
     for _, g in d.groupby("water_body"):
-        g = g.sort_values("fecha_t0").reset_index(drop=True)
-        N = len(g); start = int(N * MIN_TRAIN_FRAC)
-        if N - start < N_FOLDS * 4:
-            continue
-        fold = (N - start) // N_FOLDS
-        for k in range(N_FOLDS):
-            a = start + k * fold
-            b = N if k == N_FOLDS - 1 else a + fold
-            tr, te = g.iloc[:a], g.iloc[a:b]
-            if len(te) < 3 or len(tr) < 20:
-                continue
+        for tr, te, _ in expanding_purged_splits(
+                g, n_splits=N_FOLDS, min_train_frac=MIN_TRAIN_FRAC,
+                min_train=20, min_test=3):
             yh.append(_fit_predict(tr, te, stat_cols))
             ys.append(te["log_chl_target"].values); yp.append(te["log_chl_t0"].values)
     if not ys:
@@ -92,14 +85,14 @@ def main():
     df = pd.read_csv(PAIRS, parse_dates=["fecha_t0"])
     stat = [c for c in STATIC if c in df.columns]
     d = df[(df["group"] == "freshwater") & (df["horizon"].isin([1, 3, 5, 7]))]
-    print("######  LSTM hibrido (secuencia chl + estatico) — agua dulce  ######")
+    print("######  LSTM híbrido (secuencia chl + estático) — agua dulce  ######")
     res = oos_lstm(d, stat)
     if res:
         y, yh, yp = res
         sk = _boot(_skill, y, yh, yp)
         star = " *" if sk[1] > 0 else ""
         print(f"  LSTM: skill={sk[0]:+.3f} [{sk[1]:+.3f},{sk[2]:+.3f}]{star}  (n={len(y)})")
-    print("  (comparar con XGBoost +0.168 [+0.135,+0.200] de compare_models.py)")
+    print("  (ejecute compare_models.py con los mismos pares para la comparacion XGBoost vigente)")
 
 
 if __name__ == "__main__":

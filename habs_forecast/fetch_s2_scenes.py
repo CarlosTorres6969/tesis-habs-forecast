@@ -1,20 +1,20 @@
 """
-fetch_s2_scenes.py — Descarga MAS escenas Sentinel-2 L2A (2023-2026) para los cuerpos DEBILES.
+fetch_s2_scenes.py — Descarga MÁS escenas Sentinel-2 L2A (2023-2026) para los cuerpos DÉBILES.
 
-Por que: el cuello de botella de Yojoa/Cajon/Fonseca/Tampa es el NUMERO de escenas Sentinel-2
-(el predictor), no el target satelital (que es denso). Mas escenas claras -> mas pares causales
--> validacion anidada robusta y, en costa, posibilidad de establecer skill.
+Por qué: el cuello de botella de Yojoa/Cajon/Fonseca/Tampa es el NÚMERO de escenas Sentinel-2
+(el predictor), no el target satelital (que es denso). Más escenas claras -> más pares causales
+-> validación anidada robusta y, en costa, posibilidad de establecer skill.
 
 Fuente   : COPERNICUS/S2_SR_HARMONIZED (reflectancia de superficie, consistente 2023-2026).
 Nubes    : SCL (Scene Classification Layer) + s2cloudless (COPERNICUS/S2_CLOUD_PROBABILITY,
-           prob>40%) con DILATACION de bordes 2px/120m -> capta nubes finas/bruma/halos que
-           SCL subdetecta. Ambas mascaras se aplican en cascada antes de la mediana diaria.
-Salida   : formato IDENTICO al existente -> build_scene_state.py lo recoge SIN cambios:
-             imagenes/<carpeta>/<anio>/S2_<nombre>_<YYYY-MM-DD>_<idx>.tif   (bandas B2,B3,B4,B5,B8)
+           prob>40%) con DILATACIÓN de bordes 2px/120m -> capta nubes finas/bruma/halos que
+           SCL subdetecta. Ambas máscaras se aplican en cascada antes de la mediana diaria.
+Salida   : formato IDÉNTICO al existente -> build_scene_state.py lo recoge SIN cambios:
+             imagenes/<carpeta>/<año>/S2_<nombre>_<YYYY-MM-DD>_<idx>.tif   (bandas B2,B3,B4,B5,B8)
 Incremental: solo descarga fechas que NO existan ya en imagenes/<carpeta>/.
 
 ----------------------------------------------------------------------------------------------
-REQUIERE AUTENTICACION GEE (una sola vez). En la terminal del proyecto:
+REQUIERE AUTENTICACIÓN GEE (una sola vez). En la terminal del proyecto:
     !earthengine authenticate            # abre el navegador; usa tu cuenta Google
 luego define tu proyecto Cloud con Earth Engine API habilitada:
     set EE_PROJECT=tu-proyecto-gee       # (PowerShell:  $env:EE_PROJECT="tu-proyecto-gee")
@@ -24,9 +24,10 @@ y corre:
 """
 from __future__ import annotations
 import os, re, glob, time, urllib.request
+from datetime import date, timedelta
 import config as C
 
-# Cuerpos DEBILES a densificar (no se toca Okeechobee, que ya esta solido).
+# Cuerpos DÉBILES a densificar.
 #   nombre -> (carpeta en imagenes/, nombre de archivo, bbox [oeste,sur,este,norte])
 BODIES = {
     "yojoa":     ("Lago de Yojoa", "Yojoa",   (-88.02, 14.78, -87.90, 14.95)),
@@ -34,7 +35,16 @@ BODIES = {
     "fonseca":   ("Golfo_Fonseca", "Fonseca", (-87.85, 12.90, -87.35, 13.45)),
     "tampa_bay": ("TampaBay",      "TampaBay",(-82.75, 27.50, -82.40, 27.95)),
 }
-T0, T1 = "2023-01-01", "2026-06-30"
+# Okeechobee normalmente NO se densifica (ya está sólido), pero para captar escenas
+# RECIENTES (evita quedar stale) se incluye con S2_INCLUDE_OKEECHOBEE=1. Carpeta/regex de
+# fecha compatibles con build_scene_state; bbox reutilizado de fetch_olci_chl.py.
+if os.environ.get("S2_INCLUDE_OKEECHOBEE", "") == "1":
+    BODIES["okeechobee"] = ("Okeechobee", "Okeechobee", (-81.10, 26.70, -80.60, 27.20))
+
+# Ventana temporal (override por env para captar lo más reciente):
+#   S2_T0=YYYY-MM-DD  S2_T1=YYYY-MM-DD  (T1 exclusivo/inclusivo según el filtro de EE)
+T0 = os.environ.get("S2_T0", "2023-01-01")
+T1 = os.environ.get("S2_T1", (date.today() + timedelta(days=1)).isoformat())
 BANDS = ["B2", "B3", "B4", "B5", "B8"]      # mismo orden que lee build_scene_state
 # % nubosidad de ESCENA (filtro grueso de la tile 110x110 km; el SCL afina por pixel y
 # build_scene_state exige >=MIN_WATER_PIXELS de agua despejada). Override por env para

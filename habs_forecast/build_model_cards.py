@@ -1,16 +1,16 @@
 """
-build_model_cards.py — MODEL CARDS (metadata de cada modelo de produccion), junto a los .pkl.
+build_model_cards.py — MODEL CARDS (metadata de cada modelo de producción), junto a los .pkl.
 
 Para cada (grupo, horizonte) con modelo guardado, consolida en artifacts/models/model_cards.json:
-  - fecha_entrenamiento : mtime del bundle .pkl (cuando se entreno por ultima vez).
+  - fecha_entrenamiento : mtime del bundle .pkl (cuando se entrenó por última vez).
   - n_pares            : nº de pares de entrenamiento de ese (grupo, horizonte).
-  - n_features / features : tamano y lista del set de features usado.
-  - commit_git         : commit corto del repo (si git esta disponible).
+  - n_features / features : tamaño y lista del set de features usado.
+  - commit_git         : commit corto del repo (si git está disponible).
   - skill_validado     : skill anidado [punto, lo, hi] del TEST INTACTO (nested_metrics.json).
-  - pr_auc_alerta      : PR-AUC de alerta del test intacto, si esta.
+  - pr_auc_alerta      : PR-AUC de alerta del test intacto, si está.
 
 NO reentrena nada: solo lee los bundles ya guardados + reportes. run_forecast.py lo incluye
-en la columna 'modelo_meta' para trazabilidad de cada pronostico emitido.
+en la columna 'modelo_meta' para trazabilidad de cada pronóstico emitido.
 
 Uso:  python build_model_cards.py
 """

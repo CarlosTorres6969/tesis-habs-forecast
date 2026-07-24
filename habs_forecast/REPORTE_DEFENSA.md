@@ -1,68 +1,68 @@
 # Reporte de defensa — Sistema de predicción temprana de HABs (0–7 d)
 
-> Números definitivos, generado por `build_final_report.py`. Pronóstico causal X(≤t0)→chl(t0+h), ventana 2023–2026. Validación anidada con test temporal intacto. Skill = mejora de RMSE(log-chl) vs persistencia; `*` = IC95% bootstrap no cruza 0 (significativo).
+> Números definitivos, generado por `build_final_report.py`. Pronóstico causal X(≤t0)→chl(t0+h), ventana 2023–2026. Validación anidada con bloque temporal reservado. Skill = mejora de RMSE(log-chl) vs persistencia; `*` se aplica solo al skill cuando su IC95% no cruza 0.
 
 ## 1. Inventario de datos
 
 | Cuerpo | Grupo | Escenas S2 | Pares causales |
 |---|---|---|---|
-| cajon | freshwater | 342 | 315 |
-| fonseca | marine | 269 | 1046 |
-| okeechobee | freshwater | 509 | 1726 |
-| tampa_bay | marine | 216 | 919 |
-| yojoa | freshwater | 187 | 395 |
+| cajon | freshwater | 343 | 288 |
+| fonseca | marine | 270 | 1038 |
+| okeechobee | freshwater | 539 | 1700 |
+| tampa_bay | marine | 219 | 914 |
+| yojoa | freshwater | 188 | 391 |
 
-Total: **1523 escenas**, **4401 pares**.
+Total: **1559 escenas**, **4331 pares**.
 
-## 2. Validación anidada (TEST FINAL INTACTO) — el número defendible
+## 2. Validación anidada (TEST FINAL TEMPORAL) — el número defendible
 
-Test = último ~25% del tiempo por (grupo,horizonte), nunca tocado; features elegidas solo en DEV sobre el DEV agrupado del grupo (una decisión por grupo-horizonte) con regla de parsimonia.
+Test = último ~25% de las fechas, con **un corte común para todos los cuerpos** de cada grupo-horizonte. Toda etiqueta de DEV queda antes del primer predictor de TEST; la selección usa folds internos purgados. Los IC95% usan bootstrap por bloques de 14 días y cuerpo.
 
 ### Lagos
 | Horizonte | Skill regresión (test intacto) | PR-AUC alerta | n_test | eventos | Familias |
 |---|---|---|---|---|---|
-| +1d | +0.23 [+0.14,+0.31]* | +0.47 [+0.21,+0.79]* | 121 | 8 | AUTOREG+ERA5 |
-| +3d | +0.09 [-0.03,+0.21]  | +0.22 [+0.09,+0.41]* | 112 | 11 | AUTOREG+INSITU |
-| +5d | +0.14 [+0.08,+0.20]* | +0.06 [+0.02,+0.11]* | 109 | 6 | AUTOREG+ERA5+INSITU |
-| +7d | +0.24 [+0.14,+0.32]* | +0.08 [+0.03,+0.14]* | 108 | 6 | AUTOREG+ERA5+INSITU |
+| +1d | +0.05 [-0.07,+0.18]  | 0.07 [0.01,0.24] | 128 | 10 | AUTOREG+INSITU |
+| +3d | +0.05 [-0.05,+0.12]  | 0.08 [0.02,0.19] | 113 | 9 | AUTOREG+INSITU |
+| +5d | +0.05 [-0.12,+0.12]  | 0.09 [0.01,0.53] | 117 | 6 | AUTOREG+INSITU |
+| +7d | +0.09 [+0.02,+0.26]* | 0.04 [0.02,0.09] | 124 | 7 | AUTOREG+SPECTRAL+INSITU |
 
 Cuerpos en el test: cajon, okeechobee, yojoa.
 
 ### Costa
 | Horizonte | Skill regresión (test intacto) | PR-AUC alerta | n_test | eventos | Familias |
 |---|---|---|---|---|---|
-| +1d | +0.21 [-0.01,+0.43]  | +0.36 [+0.12,+0.59]* | 98 | 13 | AUTOREG |
-| +3d | +0.32 [+0.12,+0.49]* | +0.14 [+0.08,+0.23]* | 96 | 10 | AUTOREG+ERA5+SPECTRAL+INSITU |
-| +5d | +0.29 [+0.06,+0.49]* | +0.16 [+0.07,+0.30]* | 99 | 12 | AUTOREG |
-| +7d | +0.31 [-0.02,+0.54]  | +0.30 [+0.11,+0.53]* | 96 | 13 | AUTOREG |
+| +1d | +0.24 [+0.02,+0.44]* | 0.35 [0.10,0.68] | 94 | 12 | AUTOREG |
+| +3d | +0.32 [+0.12,+0.52]* | 0.14 [0.07,0.29] | 93 | 10 | AUTOREG+SPECTRAL+INSITU |
+| +5d | +0.28 [+0.07,+0.45]* | 0.11 [0.07,0.23] | 94 | 11 | AUTOREG+SPECTRAL |
+| +7d | +0.29 [-0.05,+0.52]  | 0.18 [0.08,0.34] | 95 | 13 | AUTOREG |
 
 Cuerpos en el test: fonseca, tampa_bay.
 
 ### Intervalos de incertidumbre (regresión cuantil conformalizada, CQR)
 
-Cada pronóstico de intensidad lleva una banda **P10–P90** calibrada en el test intacto (cobertura objetivo 0.80). Cobertura empírica:
+Cada pronóstico de intensidad lleva una banda **P10–P90** calibrada exclusivamente en CALIB, dentro de DEV, y evaluada después en TEST (cobertura objetivo 0.80). Cobertura empírica:
 
 | Grupo | +1d | +3d | +5d | +7d |
 |---|---|---|---|---|
-| Lagos | 0.65 | 0.89 | 0.72 | 0.69 |
-| Costa | 0.85 | 0.82 | 0.77 | 0.82 |
+| Lagos | 0.79 | 0.73 | 0.85 | 0.68 |
+| Costa | 0.84 | 0.83 | 0.81 | 0.79 |
 
-Cobertura ≈0.80 ⇒ intervalos fiables (no sobreconfiados). La banda cruda sin conformalizar quedaba en ~0.45–0.61 (sobreconfiada); CQR la corrige.
+Cobertura cercana a 0.80 ⇒ intervalos razonablemente calibrados. La banda cruda sin conformalizar quedó en 0.32–0.69; CQR mejoró su cobertura.
 
 ## 3. Sensibilidad ERA5 (reanálisis vs pronóstico — honestidad operativa)
 
-Ablación (aporte real de ERA5) y estrés de ruido (skill con ruido al 100% de la variabilidad de cada driver). Curva plana ⇒ se puede operar con ERA5 de pronóstico sin perder skill.
+Ablación y estrés simulado de ruido (hasta 100% de la variabilidad de cada driver). Una curva estable sugiere baja sensibilidad al error meteorológico, pero no sustituye validar un producto ERA5 de pronóstico real.
 
 | Grupo | Horiz | Skill con ERA5 | Aporte ERA5 | Skill con ruido 100% |
 |---|---|---|---|---|
-| Lagos | +1d | +0.18 [+0.11,+0.24]* | -0.010 | +0.172 |
-| Lagos | +3d | +0.17 [+0.10,+0.22]* | +0.046 | +0.123 |
-| Lagos | +5d | +0.11 [+0.04,+0.17]* | -0.029 | +0.087 |
-| Lagos | +7d | +0.21 [+0.15,+0.27]* | +0.019 | +0.208 |
-| Costa | +1d | -0.01 [-0.22,+0.14]  | -0.005 | -0.030 |
-| Costa | +3d | +0.16 [+0.01,+0.29]* | -0.007 | +0.160 |
-| Costa | +5d | +0.10 [-0.03,+0.23]  | +0.002 | +0.095 |
-| Costa | +7d | +0.19 [+0.01,+0.36]* | +0.043 | +0.168 |
+| Lagos | +1d | +0.04 [-0.10,+0.16]  | +0.008 | +0.011 |
+| Lagos | +3d | +0.01 [-0.10,+0.09]  | -0.001 | -0.103 |
+| Lagos | +5d | +0.00 [-0.16,+0.08]  | -0.050 | -0.052 |
+| Lagos | +7d | +0.13 [+0.03,+0.21]* | +0.004 | +0.090 |
+| Costa | +1d | +0.00 [-0.20,+0.18]  | -0.007 | -0.010 |
+| Costa | +3d | +0.17 [+0.03,+0.28]* | -0.012 | +0.138 |
+| Costa | +5d | +0.11 [-0.05,+0.25]  | +0.007 | +0.101 |
+| Costa | +7d | +0.19 [+0.00,+0.38]* | +0.045 | +0.187 |
 
 ## 4. Validación del target de Yojoa contra in-situ (fuera de ventana, NO entra al modelo)
 
@@ -78,18 +78,19 @@ In-situ Secchi 2018–2022 (Fadum/Ross, CSU; Zenodo 8139922) vs VIIRS-chl, 85 ma
 
 Ensamble Red+XGBoost, calibración isotónica + umbral F2 (prioriza recall: perder un bloom cuesta más que una falsa alarma).
 
-| Grupo | Umbral operativo | Recall | Precisión |
-|---|---|---|---|
-| Lagos | 0.08 | 0.81 | 0.17 |
-| Costa | 0.05 | 1.00 | 0.21 |
+| Grupo | Umbral elegido en DEV | Recall TEST (IC95%) | Precisión TEST (IC95%) | F2 TEST |
+|---|---|---|---|---|
+| Lagos | 0.05 | 0.56 [0.21,0.81] | 0.06 [0.01,0.12] | 0.22 [0.05,0.34] |
+| Costa | 0.10 | 1.00 [1.00,1.00] | 0.12 [0.08,0.17] | 0.42 [0.30,0.51] |
 
-*(Recall/precisión de la última corrida de `calibrate_alert.py`; recall alto a propósito para alerta temprana.)*
+*Isotónica y umbral se ajustan con predicciones OOS purgadas de DEV. Recall, precisión y F2 se calculan una sola vez en TEST; no son métricas de reajuste de producción.*
 
 ## 6. Niveles de confianza por cuerpo
 
-- **ALTA**: Okeechobee (target VIIRS validado con in-situ), Tampa Bay y Fonseca (target satelital validado; alerta fiable).
+- **Okeechobee**: la escala VIIRS se calibró solo con campo de 2023. La validación causal posterior tiene cobertura muy limitada (2/1/1/0 fechas en +1/+3/+5/+7 d), por lo que no permite afirmar desempeño de campo concluyente.
+- **Tampa Bay y Fonseca**: cuentan con validación temporal del target satelital a nivel de grupo; la alerta prioriza sensibilidad y presenta baja precisión, por lo que exige confirmación de campo.
 - **Validado fuera de ventana**: Yojoa (target VIIRS sigue el Secchi de campo 2018–2022; sin in-situ 2023–2026, limitación documentada).
-- **Exploratorio**: Cajón (pares insuficientes para el test anidado tras el split temporal; embalse muy nuboso, sin in-situ).
+- **Exploratorio**: Cajón (sí participa en el test temporal, pero sigue sin validación in-situ independiente y presenta alta nubosidad).
 
 ## 7. Interpretación biológica y limitaciones (revisión asesora limnológica)
 
@@ -103,5 +104,8 @@ Ensamble Red+XGBoost, calibración isotónica + umbral F2 (prioriza recall: perd
 - 0 features contaminadas (sin delta_*, sin target, sin NDVI como predictor; backbone autorregresivo usa el último valor ≤t0).
 - 0 pares con fuga temporal (todo target a +1…+8 d estrictamente futuro).
 - h=0 (detección) se reporta aparte del titular de pronóstico.
-- Selección de features y evaluación separadas (anidada) ⇒ sin sesgo de selección.
+- Corte cronológico común entre cuerpos y embargo verificado en cada frontera temporal.
+- La corrección de escala de Okeechobee está congelada al 2023-12-31; ningún dato del TEST interviene en su ajuste.
+- Selección de features y umbral dentro de DEV; el modelo de producción reutiliza esas familias.
+- IC95% por bloques cuerpo-tiempo, sin tratar escenas repetidas como observaciones iid.
 - `predict.py` y `make_maps.py` construyen features solo con datos ≤t0.

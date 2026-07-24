@@ -1,18 +1,19 @@
 """
-select_features_per_horizon.py — Selecciona el SET DE FEATURES por horizonte via ablacion.
+select_features_per_horizon.py — Selecciona el SET DE FEATURES por horizonte vía ablación.
 
-Motivo: el contexto in-situ ayuda a +7d pero estorba a +1d. Un set unico es un mal
-compromiso. Aqui cada horizonte prueba combinaciones de FAMILIAS de features y se queda
+Motivo: el contexto in-situ ayuda a +7d pero estorba a +1d. Un set único es un mal
+compromiso. Aquí cada horizonte prueba combinaciones de FAMILIAS de features y se queda
 con la que maximiza el skill OOS (ventana expansiva por cuerpo, vs persistencia).
 
 Familias:
   AUTOREG  : clorofila reciente (backbone, siempre incluido)
-  ERA5     : meteorologia
-  SPECTRAL : bandas/indices Sentinel-2
-  INSITU   : nutrientes + calidad de agua (fosforo, temp agua, OD, pH, turbidez, ...)
+  ERA5     : meteorología
+  SPECTRAL : bandas/índices Sentinel-2
+  INSITU   : nutrientes + calidad de agua (fósforo, temp agua, OD, pH, turbidez, ...)
 
-Salida: mejor combinacion por (grupo, horizonte) + tabla de skill. Define FEATURE_SETS
-para usar en el entrenamiento final.
+Salida exploratoria: mejor combinación por (grupo, horizonte) + tabla de skill purgado.
+La producción NO consume este archivo: usa los sets elegidos solo en DEV y escritos por
+``evaluate_nested.py`` en ``feature_sets.json``.
 """
 from __future__ import annotations
 import os, json, itertools
@@ -22,29 +23,21 @@ from sklearn.metrics import mean_squared_error
 import config as C
 from train import SPECTRAL, AUTOREG, ERA5, NUTRIENTS, WATERQUAL, _model, PAIRS
 from evaluate_robust import N_FOLDS, MIN_TRAIN_FRAC
+from temporal_validation import expanding_purged_splits
 
-OUT = os.path.join(C.DIR_REPORTS, "feature_sets.json")
+OUT = os.path.join(C.DIR_REPORTS, "feature_sets_exploratory.json")
 FAMILIES = {"ERA5": ERA5, "SPECTRAL": SPECTRAL, "INSITU": NUTRIENTS + WATERQUAL}
 OPTIONAL = ["ERA5", "SPECTRAL", "INSITU"]
 
 
 def oos_skill(d, feats):
     ys, yh, yp = [], [], []
-    for _, g in d.groupby("water_body"):
-        g = g.sort_values("fecha_t0").reset_index(drop=True)
-        N = len(g); start = int(N * MIN_TRAIN_FRAC)
-        if N - start < N_FOLDS * 4:
-            continue
-        fold = (N - start) // N_FOLDS
-        for k in range(N_FOLDS):
-            a = start + k * fold
-            b = N if k == N_FOLDS - 1 else a + fold
-            tr, te = g.iloc[:a], g.iloc[a:b]
-            if len(te) < 3 or len(tr) < 20:
-                continue
-            m = _model().fit(tr[feats], tr["log_chl_target"])
-            ys.append(te["log_chl_target"].values); yh.append(m.predict(te[feats]))
-            yp.append(te["log_chl_t0"].values)
+    for tr, te, _ in expanding_purged_splits(
+            d, n_splits=N_FOLDS, min_train_frac=MIN_TRAIN_FRAC,
+            min_train=20, min_test=3):
+        m = _model().fit(tr[feats], tr["log_chl_target"])
+        ys.append(te["log_chl_target"].values); yh.append(m.predict(te[feats]))
+        yp.append(te["log_chl_t0"].values)
     if not ys:
         return np.nan
     y, h, p = np.concatenate(ys), np.concatenate(yh), np.concatenate(yp)
@@ -59,11 +52,11 @@ def subsets():
 
 
 def main():
-    df = pd.read_csv(PAIRS, parse_dates=["fecha_t0"])
+    df = pd.read_csv(PAIRS, parse_dates=["fecha_t0", "fecha_target"])
     avail = set(df.columns)
     best = {}
     for group in ("freshwater", "marine"):
-        print(f"\n############  {group}  —  ablacion por horizonte  ############")
+        print(f"\n############  {group}  —  ablación por horizonte  ############")
         best[group] = {}
         for h in [1, 3, 5, 7]:
             d = df[(df["group"] == group) & (df["horizon"] == h)]

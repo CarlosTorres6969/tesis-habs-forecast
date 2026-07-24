@@ -25,7 +25,8 @@ def data_age_days(t0, run_ts=None):
     return int((run_ts.normalize() - pd.Timestamp(t0).normalize()).days)
 
 
-def evaluate_guards(water_body, t0, n_water_px, run_ts=None):
+def evaluate_guards(water_body, t0, n_water_px, run_ts=None,
+                    feature_ages=None, missing_context=None):
     """Evalua las guardas para un pronostico y devuelve (confianza, flags, age_dias).
       - flags : lista de TODAS las condiciones adversas detectadas.
       - confianza : la PEOR de ellas (config.CONFIDENCE_SEVERITY); 'OK' si no hay ninguna.
@@ -36,6 +37,12 @@ def evaluate_guards(water_body, t0, n_water_px, run_ts=None):
         flags.append("LOW_COVERAGE")
     if age > C.MAX_DATA_AGE_DAYS:
         flags.append("STALE")
+    feature_ages = feature_ages or {}
+    target_age = feature_ages.get("target")
+    if target_age is not None and target_age > C.MAX_TARGET_AGE_DAYS:
+        flags.append("STALE_TARGET")
+    if missing_context:
+        flags.append("MISSING_CONTEXT")
     if water_body in C.EXPLORATORY_BODIES:
         flags.append("EXPLORATORIO")
     return worst_confidence(flags), flags, age

@@ -1,5 +1,9 @@
 # ✅ Resumen de Tareas Completadas - HABs Forecast Pipeline
 
+> **Documento histórico (corrida 2026-07-06).** Sus métricas fueron reemplazadas por la
+> validación con corte común, embargo en cada fold y bootstrap temporal del 2026-07-20.
+> Para cifras de defensa use `REPORTE_DEFENSA.md` y `artifacts/reports/nested_metrics.json`.
+
 **Fecha de ejecución**: 2026-07-06  
 **Tiempo total de pipeline**: ~21 minutos (1376 segundos)
 

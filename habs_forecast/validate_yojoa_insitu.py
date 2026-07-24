@@ -1,18 +1,18 @@
 """
-validate_yojoa_insitu.py — VALIDACION del target satelital de Yojoa contra in-situ (FUERA del
-modelo). NO entra al entrenamiento; es un cheque de credibilidad de la MEDICION satelital.
+validate_yojoa_insitu.py — VALIDACIÓN del target satelital de Yojoa contra in-situ (FUERA del
+modelo). NO entra al entrenamiento; es un cheque de credibilidad de la MEDICIÓN satelital.
 
-Contexto: dentro de la ventana del proyecto (2023-2026) NO existe in-situ publico para Yojoa
+Contexto: dentro de la ventana del proyecto (2023-2026) NO existe in-situ público para Yojoa
 (el monitoreo de campo de Fadum/Ross, CSU, termina en 2022; Zenodo 8139922). Pero ese in-situ
 2018-2022 (Secchi, transparencia) sirve como VARA DE MEDIR independiente: si el VIIRS que usamos
 como target sigue la transparencia real del lago, gana credibilidad para 2023-2026.
 
-Metodo:
+Método:
   1. In-situ: Secchi 2018-2022 (Zenodo, 808 medidas 1979-2022), media diaria sobre los puntos.
   2. Satelital: VIIRS chlor_a diario para el bbox de Yojoa 2018-2022 (mismo ERDDAP que el target).
   3. Emparejar por fecha cercana (<=4 d) y correlacionar.
-Lectura: clorofila ALTA -> agua turbia -> Secchi BAJO, asi que se ESPERA correlacion NEGATIVA.
-Es indirecta (Secchi != clorofila), pero es la unica verdad de campo disponible para Yojoa.
+Lectura: clorofila ALTA -> agua turbia -> Secchi BAJO, así que se ESPERA correlación NEGATIVA.
+Es indirecta (Secchi != clorofila), pero es la única verdad de campo disponible para Yojoa.
 
 Salida: artifacts/validation_yojoa/yojoa_target_validation.json (+ csv de matchups)
 """
@@ -28,7 +28,7 @@ SECCHI = os.path.join(VDIR, "secchi_yojoa.csv")
 OUT_JSON = os.path.join(VDIR, "yojoa_target_validation.json")
 OUT_CSV = os.path.join(VDIR, "yojoa_matchups.csv")
 
-# bbox Yojoa (igual que fetch_satellite_chl) y ventana de validacion (fuera del modelo)
+# bbox Yojoa (igual que fetch_satellite_chl) y ventana de validación (fuera del modelo)
 LA_LO, LA_HI, LO_LO, LO_HI = 14.78, 14.95, -88.02, -87.90
 YEARS = [2018, 2019, 2020, 2021, 2022]
 ERDDAP = ("https://coastwatch.pfeg.noaa.gov/erddap/griddap/nesdisVHNSQchlaDaily.csv"
@@ -86,14 +86,14 @@ def load_secchi():
 
 def main():
     os.makedirs(VDIR, exist_ok=True)
-    print("Trayendo VIIRS chlor_a Yojoa 2018-2022 (solo validacion, NO entra al modelo)...")
+    print("Trayendo VIIRS chlor_a Yojoa 2018-2022 (solo validación, NO entra al modelo)...")
     sat = fetch_viirs()
     ins = load_secchi()
     print(f"  VIIRS: {len(sat)} dias con dato | in-situ Secchi: {len(ins)} dias (2018-2022)")
     if sat.empty or ins.empty:
         print("Sin datos suficientes para validar."); return
 
-    # emparejar por fecha mas cercana dentro de la tolerancia
+    # emparejar por fecha más cercana dentro de la tolerancia
     sat = sat.sort_values("fecha"); ins = ins.sort_values("fecha")
     m = pd.merge_asof(ins, sat, on="fecha", direction="nearest",
                       tolerance=pd.Timedelta(days=MATCH_TOL_DAYS)).dropna(subset=["chl_sat"])
@@ -101,7 +101,7 @@ def main():
     n = len(m)
     print(f"  matchups (<= {MATCH_TOL_DAYS} d): {n}")
     if n < 10:
-        print("Pocos matchups para una correlacion fiable; reportar como exploratorio.");
+        print("Pocos matchups para una correlación fiable; reportar como exploratorio.");
     res = {"n_matchups": int(n), "tol_days": MATCH_TOL_DAYS,
            "viirs_dias": int(len(sat)), "insitu_dias": int(len(ins))}
     if n >= 5:
@@ -115,14 +115,14 @@ def main():
             "spearman_chl_secchi": [float(sr), float(sp)],
             "chl_sat_mediana": float(np.median(chl)), "secchi_mediana": float(np.median(sec)),
         })
-        print(f"\n  Correlacion VIIRS-chl  vs  Secchi in-situ (n={n}):")
+        print(f"\n  Correlación VIIRS-chl  vs  Secchi in-situ (n={n}):")
         print(f"    Pearson (chl, secchi)     r={pr:+.3f}  p={pp:.3f}")
         print(f"    Pearson (log-chl, secchi) r={lr:+.3f}  p={lp:.3f}")
         print(f"    Spearman (rango)          r={sr:+.3f}  p={sp:.3f}")
         veredicto = ("NEGATIVA y significativa -> el VIIRS SIGUE la transparencia real del lago: "
-                     "target de Yojoa CREIBLE" if (sr < 0 and sp < 0.05) else
+                     "target de Yojoa CREÍBLE" if (sr < 0 and sp < 0.05) else
                      "no concluyente -> Yojoa permanece exploratorio (VIIRS 750 m es marginal "
-                     "para un lago pequeno)")
+                     "para un lago pequeño)")
         res["veredicto"] = veredicto
         print(f"\n  VEREDICTO: {veredicto}")
     import json

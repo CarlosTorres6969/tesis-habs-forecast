@@ -32,6 +32,7 @@ from sklearn.metrics import mean_squared_error
 import config as C
 from train import FEATURES, ERA5, _model, PAIRS
 from evaluate_robust import _boot, N_FOLDS, MIN_TRAIN_FRAC
+from temporal_validation import expanding_purged_splits, temporal_block_bootstrap
 
 OUT = os.path.join(C.DIR_REPORTS, "era5_sensitivity.json")
 NOISE_LEVELS = [0.0, 0.1, 0.25, 0.5, 1.0]   # fraccion de la std del driver (proxy error pronostico)
@@ -44,44 +45,36 @@ def _skill(y, yhat, per):
 
 
 def _folds(d):
-    """Indices de ventana expansiva a nivel de grupo (mismo esquema que evaluate_robust)."""
-    d = d.sort_values("fecha_t0").reset_index(drop=True)
-    N = len(d); start = int(N * MIN_TRAIN_FRAC)
-    if N - start < N_FOLDS * 4:
-        return d, []
-    fold = (N - start) // N_FOLDS
-    spans = []
-    for k in range(N_FOLDS):
-        a = start + k * fold
-        b = N if k == N_FOLDS - 1 else a + fold
-        if b - a >= 3 and a >= 30:
-            spans.append((a, b))
-    return d, spans
+    """Ventanas agrupadas con fechas comunes y purga por fecha_target."""
+    return expanding_purged_splits(
+        d, n_splits=N_FOLDS, min_train_frac=MIN_TRAIN_FRAC,
+        min_train=30, min_test=3)
 
 
 def ablation_oos(d, feats):
     """Predicciones OOS limpias para un set de features dado (para comparar CON vs SIN ERA5)."""
-    d, spans = _folds(d)
-    ys, yh, yp = [], [], []
-    for a, b in spans:
-        tr, te = d.iloc[:a], d.iloc[a:b]
+    splits = _folds(d)
+    ys, yh, yp, dates, bodies = [], [], [], [], []
+    for tr, te, _ in splits:
         m = _model().fit(tr[feats], tr["log_chl_target"])
         ys.append(te["log_chl_target"].values); yh.append(m.predict(te[feats]))
         yp.append(te["log_chl_t0"].values)
+        dates.append(te["fecha_target"].values); bodies.append(te["water_body"].values)
     if not ys:
         return None
-    return np.concatenate(ys), np.concatenate(yh), np.concatenate(yp)
+    return (np.concatenate(ys), np.concatenate(yh), np.concatenate(yp),
+            np.concatenate(dates), np.concatenate(bodies))
 
 
 def noise_oos(d, feats, era5_cols):
     """Entrena limpio; predice el test con ERA5 perturbado a varios niveles de ruido."""
-    d, spans = _folds(d)
-    if not spans:
+    splits = _folds(d)
+    if not splits:
         return None
     cols = [c for c in era5_cols if c in feats]
-    store = {lv: {"y": [], "yh": [], "yp": []} for lv in NOISE_LEVELS}
-    for a, b in spans:
-        tr, te = d.iloc[:a], d.iloc[a:b]
+    store = {lv: {"y": [], "yh": [], "yp": [], "dates": [], "bodies": []}
+             for lv in NOISE_LEVELS}
+    for tr, te, _ in splits:
         m = _model().fit(tr[feats], tr["log_chl_target"])
         sigma = {c: float(np.nanstd(tr[c].values)) for c in cols}
         for lv in NOISE_LEVELS:
@@ -94,15 +87,18 @@ def noise_oos(d, feats, era5_cols):
             store[lv]["y"].append(te["log_chl_target"].values)
             store[lv]["yh"].append(m.predict(Xte))
             store[lv]["yp"].append(te["log_chl_t0"].values)
+            store[lv]["dates"].append(te["fecha_target"].values)
+            store[lv]["bodies"].append(te["water_body"].values)
     out = {}
     for lv in NOISE_LEVELS:
         out[lv] = (np.concatenate(store[lv]["y"]), np.concatenate(store[lv]["yh"]),
-                   np.concatenate(store[lv]["yp"]))
+                   np.concatenate(store[lv]["yp"]), np.concatenate(store[lv]["dates"]),
+                   np.concatenate(store[lv]["bodies"]))
     return out
 
 
 def main():
-    df = pd.read_csv(PAIRS, parse_dates=["fecha_t0"])
+    df = pd.read_csv(PAIRS, parse_dates=["fecha_t0", "fecha_target"])
     feats_full = [f for f in FEATURES if f in df.columns]
     era5_cols = [c for c in ERA5 if c in df.columns]
     feats_noera5 = [f for f in feats_full if f not in era5_cols]
@@ -121,15 +117,18 @@ def main():
             if full is None or noe is None:
                 print(f"  +{h}d  (datos insuficientes)")
                 continue
-            sk_full = _boot(_skill, *full)
-            sk_noe = _boot(_skill, *noe)
+            sk_full = temporal_block_bootstrap(
+                _skill, *full[:3], dates=full[3], bodies=full[4])
+            sk_noe = temporal_block_bootstrap(
+                _skill, *noe[:3], dates=noe[3], bodies=noe[4])
 
             # (B) ESTRES de ruido en ERA5
             noise = noise_oos(d, feats_full, era5_cols)
             curve = {}
             for lv in NOISE_LEVELS:
-                y, yh, yp = noise[lv]
-                curve[lv] = _boot(_skill, y, yh, yp)
+                y, yh, yp, dates, bodies = noise[lv]
+                curve[lv] = temporal_block_bootstrap(
+                    _skill, y, yh, yp, dates=dates, bodies=bodies)
 
             report[group][h] = {
                 "skill_con_era5": sk_full, "skill_sin_era5": sk_noe,

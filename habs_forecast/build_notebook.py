@@ -115,10 +115,10 @@ md("""## 8. Demostración en vivo: el modelo supera a la persistencia
 Entrenamiento rápido (un cuerpo, walk-forward temporal) para ilustrar que el pronóstico tiene
 skill real frente al baseline de persistencia (proyectar el último valor conocido).""")
 code("""from sklearn.metrics import mean_squared_error
+from temporal_validation import common_temporal_holdout
 feats = [f for f in FEATURES if f in df.columns]
 d = df[(df.water_body=="okeechobee") & (df.horizon==5)].sort_values("fecha_t0")
-cut = d.fecha_t0.quantile(0.75)
-tr, te = d[d.fecha_t0<=cut], d[d.fecha_t0>cut]
+tr, te, split = common_temporal_holdout(d, test_frac=0.25, purge_days=C.VALIDATION["purge_days"])
 m = _model().fit(tr[feats], tr.log_chl_target)
 rmse_model = np.sqrt(mean_squared_error(te.log_chl_target, m.predict(te[feats])))
 rmse_persist = np.sqrt(mean_squared_error(te.log_chl_target, te.log_chl_t0))

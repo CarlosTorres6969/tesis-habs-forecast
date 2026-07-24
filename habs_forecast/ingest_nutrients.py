@@ -1,10 +1,10 @@
 """
-ingest_nutrients.py — TARGET/CONTEXTO de nutrientes in-situ (Fosforo) desde WQP (publico).
+ingest_nutrients.py — TARGET/CONTEXTO de nutrientes in-situ (Fósforo) desde WQP (público).
 
-Hallazgo: en 2023-2026 el Fosforo SI es denso para Okeechobee (4389 medidas / 483 fechas)
-y Tampa (3841 / 444). Nitrogeno escaso. Honduras sin cobertura WQP.
+Hallazgo: en 2023-2026 el Fósforo SÍ es denso para Okeechobee (4389 medidas / 483 fechas)
+y Tampa (3841 / 444). Nitrógeno escaso. Honduras sin cobertura WQP.
 
-El fosforo cambia LENTO -> contexto de susceptibilidad (no driver diario). Se ingiere por
+El fósforo cambia LENTO -> contexto de susceptibilidad (no driver diario). Se ingiere por
 bbox de cada cuerpo (ya filtrado espacialmente) y se agrega a mediana diaria.
 Salida: artifacts/targets/nutrients_daily.csv (water_body, fecha, tp_mgl, group)
 
@@ -52,7 +52,7 @@ def build():
         df["val"] = pd.to_numeric(df["ResultMeasureValue"], errors="coerce")
         df["fecha"] = pd.to_datetime(df["ActivityStartDate"], errors="coerce").dt.normalize()
         unit = df.get("ResultMeasure/MeasureUnitCode", "").astype(str).str.lower()
-        # normalizar a mg/L (ug/L -> /1000); descartar valores no fisicos
+        # normalizar a mg/L (ug/L -> /1000); descartar valores no físicos
         f = pd.Series(1.0, index=df.index); f[unit.str.contains("ug/l", na=False)] = 0.001
         df["tp_mgl"] = df["val"] * f
         df = df.dropna(subset=["fecha", "tp_mgl"])
@@ -60,7 +60,7 @@ def build():
         daily = df.groupby("fecha", as_index=False)["tp_mgl"].median()
         daily["water_body"] = name; daily["group"] = group
         frames.append(daily)
-        print(f"  {name:12s}: {len(daily):>4} dias | TP mediana={daily['tp_mgl'].median():.3f} mg/L")
+        print(f"  {name:12s}: {len(daily):>4} días | TP mediana={daily['tp_mgl'].median():.3f} mg/L")
         time.sleep(0.5)
 
     if not frames:

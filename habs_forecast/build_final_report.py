@@ -9,7 +9,6 @@ from __future__ import annotations
 import os, json
 import numpy as np
 import pandas as pd
-import joblib
 import config as C
 
 R = C.DIR_REPORTS
@@ -30,13 +29,20 @@ def fmt_ci(node):
     return f"{m:+.2f} [{lo:+.2f},{hi:+.2f}]{sig}"
 
 
+def fmt_plain_ci(node):
+    if not isinstance(node, list) or len(node) < 3 or node[0] is None:
+        return "n/a"
+    point, lo, hi = node
+    return f"{point:.2f} [{lo:.2f},{hi:.2f}]"
+
+
 def main():
     L = []
     A = L.append
     A("# Reporte de defensa — Sistema de predicción temprana de HABs (0–7 d)\n")
     A("> Números definitivos, generado por `build_final_report.py`. Pronóstico causal X(≤t0)→chl(t0+h), "
-      "ventana 2023–2026. Validación anidada con test temporal intacto. Skill = mejora de RMSE(log-chl) "
-      "vs persistencia; `*` = IC95% bootstrap no cruza 0 (significativo).\n")
+      "ventana 2023–2026. Validación anidada con bloque temporal reservado. Skill = mejora de "
+      "RMSE(log-chl) vs persistencia; `*` se aplica solo al skill cuando su IC95% no cruza 0.\n")
 
     # --- inventario ---
     scene = pd.read_csv(os.path.join(C.DIR_STATE, "scene_state.csv"))
@@ -51,16 +57,10 @@ def main():
 
     # --- validacion anidada ---
     nested = _j("nested_metrics.json", {})
-    # cuerpos reales presentes en el TEST intacto, por grupo (desde el volcado de predicciones;
-    # nested_metrics ya no guarda nombres de cuerpo porque la seleccion es AGRUPADA por grupo).
-    test_bodies = {}
-    pred_dump = os.path.join(R, "nested_test_predictions.csv")
-    if os.path.exists(pred_dump):
-        pd_dump = pd.read_csv(pred_dump)
-        test_bodies = {g: sorted(s.unique()) for g, s in pd_dump.groupby("group")["water_body"]}
-    A("## 2. Validación anidada (TEST FINAL INTACTO) — el número defendible\n")
-    A("Test = último ~25% del tiempo por (grupo,horizonte), nunca tocado; features elegidas solo en DEV "
-      "sobre el DEV agrupado del grupo (una decisión por grupo-horizonte) con regla de parsimonia.\n")
+    A("## 2. Validación anidada (TEST FINAL TEMPORAL) — el número defendible\n")
+    A("Test = último ~25% de las fechas, con **un corte común para todos los cuerpos** de cada "
+      "grupo-horizonte. Toda etiqueta de DEV queda antes del primer predictor de TEST; la selección "
+      "usa folds internos purgados. Los IC95% usan bootstrap por bloques de 14 días y cuerpo.\n")
     for grp in ("freshwater", "marine"):
         if grp not in nested:
             continue
@@ -73,9 +73,10 @@ def main():
             if not nd:
                 continue
             fam = nd.get("features_per_body", {}).get("_grupo", "—")
-            A(f"| +{h}d | {fmt_ci(nd['skill_nested'])} | {fmt_ci(nd['pr_auc_nested'])} | "
+            A(f"| +{h}d | {fmt_ci(nd['skill_nested'])} | {fmt_plain_ci(nd['pr_auc_nested'])} | "
               f"{nd['n_test']} | {nd['pos_test']} | {fam} |")
-        bodies = test_bodies.get(grp, [])
+        bodies = sorted({body for h in ("1", "3", "5", "7")
+                         for body in nested[grp].get(h, {}).get("test_bodies", [])})
         if bodies:
             A(f"\nCuerpos en el test: {', '.join(bodies)}.\n")
         else:
@@ -85,8 +86,8 @@ def main():
     iv = _j("interval_metrics.json", {})
     if iv:
         A("### Intervalos de incertidumbre (regresión cuantil conformalizada, CQR)\n")
-        A("Cada pronóstico de intensidad lleva una banda **P10–P90** calibrada en el test intacto "
-          "(cobertura objetivo 0.80). Cobertura empírica:\n")
+        A("Cada pronóstico de intensidad lleva una banda **P10–P90** calibrada exclusivamente en "
+          "CALIB, dentro de DEV, y evaluada después en TEST (cobertura objetivo 0.80). Cobertura empírica:\n")
         A("| Grupo | +1d | +3d | +5d | +7d |")
         A("|---|---|---|---|---|")
         for grp in ("freshwater", "marine"):
@@ -98,14 +99,18 @@ def main():
                 nd = iv[grp].get(h)
                 cells.append(f"{nd['cobertura_cqr'][0]:.2f}" if nd else "—")
             A(f"| {nm} | " + " | ".join(cells) + " |")
-        A("\nCobertura ≈0.80 ⇒ intervalos fiables (no sobreconfiados). La banda cruda sin "
-          "conformalizar quedaba en ~0.45–0.61 (sobreconfiada); CQR la corrige.\n")
+        raw_values = [iv[g][h]["cobertura_cruda"] for g in ("freshwater", "marine")
+                      for h in ("1", "3", "5", "7") if h in iv.get(g, {})]
+        raw_range = (f"{min(raw_values):.2f}–{max(raw_values):.2f}" if raw_values else "n/a")
+        A(f"\nCobertura cercana a 0.80 ⇒ intervalos razonablemente calibrados. La banda cruda sin "
+          f"conformalizar quedó en {raw_range}; CQR mejoró su cobertura.\n")
 
     # --- sensibilidad ERA5 ---
     era5 = _j("era5_sensitivity.json", {})
     A("## 3. Sensibilidad ERA5 (reanálisis vs pronóstico — honestidad operativa)\n")
-    A("Ablación (aporte real de ERA5) y estrés de ruido (skill con ruido al 100% de la variabilidad "
-      "de cada driver). Curva plana ⇒ se puede operar con ERA5 de pronóstico sin perder skill.\n")
+    A("Ablación y estrés simulado de ruido (hasta 100% de la variabilidad de cada driver). Una curva "
+      "estable sugiere baja sensibilidad al error meteorológico, pero no sustituye validar un producto "
+      "ERA5 de pronóstico real.\n")
     A("| Grupo | Horiz | Skill con ERA5 | Aporte ERA5 | Skill con ruido 100% |")
     A("|---|---|---|---|---|")
     for grp in ("freshwater", "marine"):
@@ -144,26 +149,30 @@ def main():
     A("## 5. Alerta calibrada (operativa)\n")
     A("Ensamble Red+XGBoost, calibración isotónica + umbral F2 (prioriza recall: perder un bloom "
       "cuesta más que una falsa alarma).\n")
-    A("| Grupo | Umbral operativo | Recall | Precisión |")
-    A("|---|---|---|---|")
-    cal = {"freshwater": ("0.09", "0.81", "0.17"), "marine": ("0.05", "1.00", "0.21")}
-    for grp, (t, rc, pc) in cal.items():
+    A("| Grupo | Umbral elegido en DEV | Recall TEST (IC95%) | Precisión TEST (IC95%) | F2 TEST |")
+    A("|---|---|---|---|---|")
+    for grp in ("freshwater", "marine"):
         nm = {"freshwater": "Lagos", "marine": "Costa"}[grp]
-        p = os.path.join(C.DIR_MODELS, f"alert_calib_{grp}.pkl")
-        if os.path.exists(p):
-            t = f"{joblib.load(p)['threshold']:.2f}"
-        A(f"| {nm} | {t} | {rc} | {pc} |")
-    A("\n*(Recall/precisión de la última corrida de `calibrate_alert.py`; recall alto a propósito "
-      "para alerta temprana.)*\n")
+        cal = nested.get(grp, {}).get("alert_calibration") or {}
+        threshold = cal.get("threshold_selected_in_dev")
+        threshold_text = f"{threshold:.2f}" if threshold is not None else "n/a"
+        A(f"| {nm} | {threshold_text} | {fmt_plain_ci(cal.get('recall_test'))} | "
+          f"{fmt_plain_ci(cal.get('precision_test'))} | {fmt_plain_ci(cal.get('f2_test'))} |")
+    A("\n*Isotónica y umbral se ajustan con predicciones OOS purgadas de DEV. Recall, precisión y "
+      "F2 se calculan una sola vez en TEST; no son métricas de reajuste de producción.*\n")
 
     # --- niveles de confianza + honestidad ---
     A("## 6. Niveles de confianza por cuerpo\n")
-    A("- **ALTA**: Okeechobee (target VIIRS validado con in-situ), Tampa Bay y Fonseca (target satelital "
-      "validado; alerta fiable).")
+    A("- **Okeechobee**: la escala VIIRS se calibró solo con campo de 2023. La validación causal "
+      "posterior tiene cobertura muy limitada (2/1/1/0 fechas en +1/+3/+5/+7 d), por lo que no "
+      "permite afirmar desempeño de campo concluyente.")
+    A("- **Tampa Bay y Fonseca**: cuentan con validación temporal del target satelital a nivel de "
+      "grupo; la alerta prioriza sensibilidad y presenta baja precisión, por lo que exige "
+      "confirmación de campo.")
     A("- **Validado fuera de ventana**: Yojoa (target VIIRS sigue el Secchi de campo 2018–2022; "
       "sin in-situ 2023–2026, limitación documentada).")
-    A("- **Exploratorio**: Cajón (pares insuficientes para el test anidado tras el split temporal; "
-      "embalse muy nuboso, sin in-situ).\n")
+    A("- **Exploratorio**: Cajón (sí participa en el test temporal, pero sigue sin validación in-situ "
+      "independiente y presenta alta nubosidad).\n")
     A("## 7. Interpretación biológica y limitaciones (revisión asesora limnológica)\n")
     A("- El modelo predice **clorofila-a (µg/L) = proxy de BIOMASA algal**. Clorofila-a alta indica "
       "más biomasa, **no confirma por sí sola floración NOCIVA** (toxicidad).")
@@ -181,7 +190,11 @@ def main():
       "autorregresivo usa el último valor ≤t0).")
     A("- 0 pares con fuga temporal (todo target a +1…+8 d estrictamente futuro).")
     A("- h=0 (detección) se reporta aparte del titular de pronóstico.")
-    A("- Selección de features y evaluación separadas (anidada) ⇒ sin sesgo de selección.")
+    A("- Corte cronológico común entre cuerpos y embargo verificado en cada frontera temporal.")
+    A("- La corrección de escala de Okeechobee está congelada al 2023-12-31; ningún dato del TEST "
+      "interviene en su ajuste.")
+    A("- Selección de features y umbral dentro de DEV; el modelo de producción reutiliza esas familias.")
+    A("- IC95% por bloques cuerpo-tiempo, sin tratar escenas repetidas como observaciones iid.")
     A("- `predict.py` y `make_maps.py` construyen features solo con datos ≤t0.\n")
 
     with open(OUT, "w", encoding="utf-8") as f:

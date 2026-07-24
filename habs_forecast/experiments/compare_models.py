@@ -26,6 +26,7 @@ from xgboost import XGBRegressor
 import config as C
 from train import FEATURES, PAIRS
 from evaluate_robust import _boot, N_FOLDS, MIN_TRAIN_FRAC
+from temporal_validation import expanding_purged_splits
 
 
 def make_models():
@@ -47,17 +48,9 @@ def oos_predictions(d, model_factory):
     """OOS expansivo por cuerpo; devuelve y, yhat, persist concatenados."""
     ys, yh, yp = [], [], []
     for _, g in d.groupby("water_body"):
-        g = g.sort_values("fecha_t0").reset_index(drop=True)
-        N = len(g); start = int(N * MIN_TRAIN_FRAC)
-        if N - start < N_FOLDS * 4:
-            continue
-        fold = (N - start) // N_FOLDS
-        for k in range(N_FOLDS):
-            a = start + k * fold
-            b = N if k == N_FOLDS - 1 else a + fold
-            tr, te = g.iloc[:a], g.iloc[a:b]
-            if len(te) < 3 or len(tr) < 20:
-                continue
+        for tr, te, _ in expanding_purged_splits(
+                g, n_splits=N_FOLDS, min_train_frac=MIN_TRAIN_FRAC,
+                min_train=20, min_test=3):
             m = model_factory()
             m.fit(tr[FEATURES], tr["log_chl_target"])
             ys.append(te["log_chl_target"].values); yh.append(m.predict(te[FEATURES]))

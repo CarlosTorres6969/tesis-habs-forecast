@@ -1,15 +1,15 @@
 """
-evaluate_robust.py — Evaluacion ROBUSTA (estabiliza la alerta de alta varianza).
+evaluate_robust.py — Evaluación ROBUSTA (estabiliza la alerta de alta varianza).
 
-Problema: el fold unico 70/30 por cuerpo-horizonte deja test pequenos (15-25 muestras)
--> Recall/PR-AUC inestables y muchos nan. Solucion:
+Problema: el fold único 70/30 por cuerpo-horizonte deja test pequeños (15-25 muestras)
+-> Recall/PR-AUC inestables y muchos nan. Solución:
 
-  1. Walk-forward de VENTANA EXPANSIVA (multiples folds) por cuerpo -> recoge predicciones
-     FUERA DE MUESTRA (OOS) de toda la serie, no solo del ultimo 30%.
+  1. Walk-forward de VENTANA EXPANSIVA (múltiples folds) por cuerpo -> recoge predicciones
+     FUERA DE MUESTRA (OOS) de toda la serie, no solo del último 30%.
   2. AGRUPA las OOS por (grupo, horizonte) a traves de cuerpos y folds -> n grande.
   3. Intervalos de confianza 95% por BOOTSTRAP sobre las OOS agrupadas.
 
-Reporta el producto PRINCIPAL (skill de regresion vs persistencia) y el COMPLEMENTARIO
+Reporta el producto PRINCIPAL (skill de regresión vs persistencia) y el COMPLEMENTARIO
 (alerta) con su incertidumbre. Reusa FEATURES/_model/_clf de train.py.
 """
 from __future__ import annotations
@@ -21,6 +21,7 @@ from sklearn.metrics import (mean_squared_error, average_precision_score,
                              recall_score, f1_score)
 import config as C
 from train import FEATURES, _model, _clf, PAIRS
+from temporal_validation import expanding_purged_splits
 
 OUT = os.path.join(C.DIR_REPORTS, "robust_metrics.json")
 N_FOLDS = 4
@@ -30,20 +31,11 @@ RNG = np.random.default_rng(C.RANDOM_STATE)
 
 
 def expanding_oos(g):
-    """Ventana expansiva: predicciones OOS de cada bloque futuro. Devuelve DataFrame OOS."""
-    g = g.sort_values("fecha_t0").reset_index(drop=True)
-    N = len(g)
-    start = int(N * MIN_TRAIN_FRAC)
-    if N - start < N_FOLDS * 4:
-        return pd.DataFrame()
-    fold = (N - start) // N_FOLDS
+    """Ventana expansiva purgada de cada bloque futuro. Devuelve DataFrame OOS."""
     out = []
-    for k in range(N_FOLDS):
-        a = start + k * fold
-        b = N if k == N_FOLDS - 1 else a + fold
-        tr, te = g.iloc[:a], g.iloc[a:b]
-        if len(te) < 3 or len(tr) < 20:
-            continue
+    for tr, te, _ in expanding_purged_splits(
+            g, n_splits=N_FOLDS, min_train_frac=MIN_TRAIN_FRAC,
+            min_train=20, min_test=3):
         reg = _model().fit(tr[FEATURES], tr["log_chl_target"])
         yhat = reg.predict(te[FEATURES])
         proba = np.full(len(te), np.nan)
@@ -59,7 +51,7 @@ def expanding_oos(g):
 
 
 def _boot(fn, *arrays, n=B):
-    """IC 95% por bootstrap de un estadistico fn sobre arrays alineados."""
+    """IC 95% por bootstrap de un estadístico fn sobre arrays alineados."""
     m = len(arrays[0])
     vals = []
     for _ in range(n):
@@ -92,7 +84,7 @@ def _prauc(hab, proba):
 
 
 def main():
-    df = pd.read_csv(PAIRS, parse_dates=["fecha_t0"])
+    df = pd.read_csv(PAIRS, parse_dates=["fecha_t0", "fecha_target"])
     feats = [f for f in FEATURES if f in df.columns]
     FEATURES[:] = feats
     report = {}

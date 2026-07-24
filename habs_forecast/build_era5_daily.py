@@ -1,13 +1,13 @@
 """
 build_era5_daily.py — Serie ERA5 DIARIA por cuerpo de agua (2023-2026) desde los NetCDF.
 
-Drivers meteorologicos del pronostico. Extrae el punto de grilla mas cercano al centroide de
+Drivers meteorológicos del pronóstico. Extrae el punto de grilla más cercano al centroide de
 cada cuerpo, combina archivos instant (t2m,u10,v10,sp) y accum (ssrd,tp) y agrega a diario:
-  - instant -> media diaria ;  accum (radiacion, precip) -> suma diaria.
+  - instant -> media diaria ;  accum (radiación, precip) -> suma diaria.
 Calcula wind_speed_10m = hypot(u10,v10). Salida: artifacts/state_series/era5_daily.csv
 
-Nota: Fonseca (~13.2 N) queda al borde sur de la grilla (lat min 14.5) -> se usa el punto mas
-cercano como aproximacion (declarar como limitacion).
+Nota: Fonseca (~13.2 N) queda al borde sur de la grilla (lat min 14.5) -> se usa el punto más
+cercano como aproximación (declarar como limitación).
 """
 from __future__ import annotations
 import os, glob
@@ -54,10 +54,10 @@ def build():
     if di.empty and da.empty:
         print("Sin NetCDF legibles."); return
 
-    tcol = "valid_time" if "valid_time" in di.columns else "time"
     def daily(df, how):
         if df.empty:
             return df
+        tcol = "valid_time" if "valid_time" in df.columns else "time"
         df["fecha"] = pd.to_datetime(df[tcol]).dt.normalize()
         keep = [c for c in RENAME if c in df.columns]
         agg = {RENAME[c]: (c, how) for c in keep}
@@ -68,12 +68,12 @@ def build():
     out = gi.merge(ga, on=["body", "fecha"], how="outer") if not ga.empty else gi
     out = out.rename(columns={"body": "water_body"})
     out["wind_speed_10m"] = np.hypot(out.get("wind_u_10m", 0), out.get("wind_v_10m", 0))
-    out = out[(out["fecha"] >= "2023-01-01") & (out["fecha"] <= "2026-12-31")]
+    out = out[out["fecha"] >= "2023-01-01"]
     out = out.sort_values(["water_body", "fecha"]).reset_index(drop=True)
 
     os.makedirs(C.DIR_STATE, exist_ok=True)
     out.to_csv(OUT, index=False)
-    print(f"ERA5 diario -> {OUT} ({len(out)} dias-cuerpo)")
+    print(f"ERA5 diario -> {OUT} ({len(out)} días-cuerpo)")
     print(out.groupby("water_body").agg(dias=("fecha", "size"),
           desde=("fecha", "min"), hasta=("fecha", "max")).to_string())
     return out

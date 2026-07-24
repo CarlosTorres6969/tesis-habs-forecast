@@ -1,16 +1,16 @@
 """
 predict.py — PREDICTOR DESPLEGABLE. Dado un cuerpo de agua y una fecha t0 (por defecto la
-ultima escena disponible), produce el pronostico 0-7 dias:
+última escena disponible), produce el pronóstico 0-7 días:
     - INTENSIDAD: clorofila-a esperada (ug/L) por horizonte = proxy de BIOMASA algal
-    - RIESGO: probabilidad de biomasa algal elevada / clorofila-a anomala (ensamble Red+XGBoost)
-      y decision (si/no). NB: clorofila-a alta indica mas biomasa, NO confirma floracion NOCIVA
-      (toxicidad); la alerta senala condiciones de RIESGO que ameritan verificacion de campo
-      (identificacion de cianobacterias, toxinas). Sentinel-2 no distingue cianobacterias.
+    - RIESGO: probabilidad de biomasa algal elevada / clorofila-a anómala (ensamble Red+XGBoost)
+      y decisión (sí/no). NB: clorofila-a alta indica más biomasa, NO confirma floración NOCIVA
+      (toxicidad); la alerta señala condiciones de RIESGO que ameritan verificación de campo
+      (identificación de cianobacterias, toxinas). Sentinel-2 no distingue cianobacterias.
 
 Construye el vector de features en t0 desde los artefactos (igual que match_pairs, pero sin
-el target futuro), carga los modelos de produccion (train_final.py) y predice.
+el target futuro), carga los modelos de producción (train_final.py) y predice.
 
-Uso:  python predict.py                 -> todos los cuerpos, ultima escena
+Uso:  python predict.py                 -> todos los cuerpos, última escena
       python predict.py okeechobee      -> un cuerpo
       python predict.py okeechobee 2025-08-01
 """
@@ -22,10 +22,14 @@ import torch
 import config as C
 from train import SPECTRAL, AUTOREG, ERA5 as ERA5F
 from train_nn import HABNet
+from match_pairs import autoregressive_features
 import guards
 
 T = os.path.join(C.DIR_OUT, "targets")
-SCENE = os.path.join(C.DIR_STATE, "scene_state.csv")
+_SCENE_RAW = os.path.join(C.DIR_STATE, "scene_state.csv")
+_SCENE_HARM = os.path.join(C.DIR_STATE, "scene_state_harmonized.csv")
+# Debe coincidir con match_pairs.SCENE_FILE para evitar train-serving skew en Landsat.
+SCENE = _SCENE_HARM if os.path.exists(_SCENE_HARM) else _SCENE_RAW
 TARGET = os.path.join(T, "combined_target.csv")
 ERA5D = os.path.join(C.DIR_STATE, "era5_daily.csv")
 NUTR = os.path.join(T, "nutrients_daily.csv")
@@ -40,13 +44,19 @@ WQ_VARS = ["water_temp", "do_mgl", "ph", "turbidity_insitu", "spec_cond", "secch
 
 
 def _load(path, wb):
+    if not os.path.exists(path):
+        return pd.DataFrame(columns=["water_body", "fecha"])
     d = pd.read_csv(path)
     if "fecha" in d.columns:
         d["fecha"] = pd.to_datetime(d["fecha"], utc=True, errors="coerce").dt.tz_localize(None).dt.normalize()
     return d[d["water_body"] == wb] if "water_body" in d.columns else d
 
 
-def build_features(wb, t0):
+def _age_days(t0, date):
+    return int((pd.Timestamp(t0).normalize() - pd.Timestamp(date).normalize()).days)
+
+
+def build_features(wb, t0, include_meta=False):
     row = {}
     # --- espectral (escena S2 en/antes de t0) ---
     sc = _load(SCENE, wb)
@@ -61,48 +71,70 @@ def build_features(wb, t0):
     past = tg[tg["fecha"] <= t0]
     if past.empty:
         return None
-    chl0 = past.iloc[-1]["chl_ugl"]
-    def near(days):
-        w = past[(past["fecha"] >= t0 - pd.Timedelta(days=days + 2)) &
-                 (past["fecha"] <= t0 - pd.Timedelta(days=days - 2))]
-        return w["chl_ugl"].mean() if len(w) else chl0
-    roll7 = past[past["fecha"] >= t0 - pd.Timedelta(days=7)]["chl_ugl"].mean()
-    l3, l7 = near(3), near(7)
-    row.update({"chl_t0": chl0, "log_chl_t0": np.log1p(max(chl0, 0)), "chl_lag3": l3,
-                "chl_lag7": l7, "chl_roll7": roll7, "chl_trend7": chl0 - l7})
-    # --- ERA5 (en/antes de t0 + media movil 7d) ---
+    ar = autoregressive_features(tg, t0)
+    if ar is None:
+        return None
+    target_date = ar.pop("target_date_t0")
+    chl0 = ar["chl_t0"]
+    row.update(ar)
+    ages = {"target": _age_days(t0, target_date)}
+    missing_context = []
+    # --- ERA5 (en/antes de t0 + media móvil 7d) ---
     er = _load(ERA5D, wb).sort_values("fecha")
     ep = er[er["fecha"] <= t0]
     if len(ep):
         last = ep.iloc[-1]
-        w7 = ep[ep["fecha"] >= t0 - pd.Timedelta(days=7)]
-        for v in ERA5_BASE:
-            if v in ep.columns:
-                row[v] = last[v]
-                row[f"{v}_roll7"] = w7[v].mean()
+        era_age = _age_days(t0, last["fecha"])
+        ages["era5"] = era_age
+        if era_age <= C.MAX_ERA5_AGE_DAYS:
+            last_date = pd.Timestamp(last["fecha"])
+            w7 = ep[(ep["fecha"] > last_date - pd.Timedelta(days=7)) &
+                    (ep["fecha"] <= last_date)]
+            for v in ERA5_BASE:
+                if v in ep.columns:
+                    row[v] = last[v]
+                    row[f"{v}_roll7"] = w7[v].mean()
+        else:
+            missing_context.append("ERA5")
+    else:
+        ages["era5"] = None
+        missing_context.append("ERA5")
     # --- nutrientes + calidad de agua (contexto <= t0) ---
     nu = _load(NUTR, wb)
+    ages["nutrients"] = None
     if "tp_mgl" in nu.columns and len(nu):
         p = nu[nu["fecha"] <= t0].sort_values("fecha")
         if len(p):
+            ages["nutrients"] = _age_days(t0, p.iloc[-1]["fecha"])
+        if len(p) and ages["nutrients"] <= C.MAX_NUTRIENT_AGE_DAYS:
             row["tp_context"] = p.iloc[-1]["tp_mgl"]
+        else:
+            missing_context.append("NUTRIENTS")
     wq = _load(WQ, wb)
+    ages["waterquality"] = None
     if len(wq):
         p = wq[wq["fecha"] <= t0].sort_values("fecha")
         if len(p):
+            ages["waterquality"] = _age_days(t0, p.iloc[-1]["fecha"])
+        if len(p) and ages["waterquality"] <= C.MAX_WATERQUALITY_AGE_DAYS:
             for v in WQ_VARS:
                 if v in wq.columns:
                     row[v] = p.iloc[-1][v]
-    return pd.DataFrame([row]), float(chl0), t0
+        else:
+            missing_context.append("WATERQUALITY")
+    result = (pd.DataFrame([row]), float(chl0), t0)
+    if include_meta:
+        return (*result, {"feature_ages": ages, "missing_context": missing_context})
+    return result
 
 
 def forecast_body(wb, t0=None, spec_override=None, res=None):
-    """Pronostico ESTRUCTURADO 0-7 d para un cuerpo (sin imprimir). Fuente unica de verdad
+    """Pronóstico ESTRUCTURADO 0-7 d para un cuerpo (sin imprimir). Fuente única de verdad
     de la inferencia: la reusa tanto predict_body (CLI) como run_forecast (bucle operativo).
     Causal: solo datos <= t0 (build_features). Devuelve un dict con metadatos + lista por
-    horizonte (chl_pred, p10, p90, prob_riesgo, riesgo), o None si faltan datos.
+    horizonte (chl_pred, banda, probabilidad y alerta de anomalia), o None si faltan datos.
 
-    spec_override (opcional): dict {banda/indice espectral: valor} con la mediana espectral de
+    spec_override (opcional): dict {banda/índice espectral: valor} con la mediana espectral de
     una escena EXTERNA (p.ej. un GeoTIFF subido en la app). Si se pasa, reemplaza las columnas
     espectrales del vector de features; el contexto NO espectral (autorreg/ERA5/in-situ) sigue
     siendo el del cuerpo en t0. No altera el comportamiento por defecto (spec_override=None)."""
@@ -115,18 +147,18 @@ def forecast_body(wb, t0=None, spec_override=None, res=None):
     if scpast.empty:
         return None
     n_water_px = int(scpast.iloc[-1]["n_water_px"]) if "n_water_px" in scpast.columns else None
-    built = build_features(wb, t0)
+    built = build_features(wb, t0, include_meta=True)
     if built is None:
         return None
-    X, chl0, t0 = built
+    X, chl0, t0, feature_meta = built
     if spec_override:                          # escena externa: usa SU espectral (app: GeoTIFF subido)
         for f, v in spec_override.items():
             if f in X.columns:
                 X[f] = v
-    # recursos: precargados (res, p.ej. cache de Streamlit) o leidos de disco (comportamiento normal)
+    # recursos: precargados (res, p.ej. cache de Streamlit) o leídos de disco (comportamiento normal)
     thr_map = res["thr_body"] if res else joblib.load(os.path.join(MODELS, "thr_body.pkl"))
     thr_body = thr_map.get(wb, 10.0)
-    thr_floracion = C.alert_threshold_ugl(thr_body)   # p85 acotado al nivel biologico (<=24 ug/L)
+    thr_floracion = C.alert_threshold_ugl(thr_body)   # p85 acotado al nivel biológico (<=24 ug/L)
     thr_elevada = C.elevated_threshold_ugl(thr_floracion)  # banda de aviso (< floracion, ordenado)
     if res:
         calib = res["calib"].get(group)
@@ -155,7 +187,9 @@ def forecast_body(wb, t0=None, spec_override=None, res=None):
             Qc = b.get("q_conformal", 0.0)
             a, c = float(b["qlo"].predict(Xh)[0]), float(b["qhi"].predict(Xh)[0])
             p10 = max(float(np.expm1(min(a, c) - Qc)), 0.0)
-            p90 = float(np.expm1(max(a, c) + Qc))
+            p90 = max(float(np.expm1(max(a, c) + Qc)), 0.0)
+            p10 = min(p10, chl)
+            p90 = max(p90, chl)
         # alerta: ensamble XGB_clf + Red
         probs = []
         if b["clf"] is not None:
@@ -172,18 +206,24 @@ def forecast_body(wb, t0=None, spec_override=None, res=None):
         p = float(np.mean(probs))
         if calib is not None:                       # calibrar a probabilidad operativa
             p = float(calib["iso"].predict([p])[0])
-        # RIESGO por BIOMASA prevista (consistente con el mapa y con lo que se ve): la clorofila
-        # pronosticada vs el umbral biologico del cuerpo. prob_riesgo (clasificador calibrado) se
-        # conserva como evidencia auxiliar de anomalia.
+        event_threshold = float(b.get("event_thresholds", {}).get(wb, thr_body))
+        alerta_anomalia = bool(p >= pthr)
+        # NIVEL = magnitud biologica; ALERTA = probabilidad calibrada de exceder el P85
+        # validado. Se conservan como dos salidas distintas, sin mezclar sus umbrales.
         nivel = C.biomass_level(chl, thr_floracion, thr_elevada)
         horizons.append({"horizon": h, "chl_pred": chl, "p10": p10, "p90": p90,
                          "prob_riesgo": p, "nivel": nivel,
-                         "riesgo": bool(nivel == "floracion"),
+                         "event_threshold_ugl": event_threshold,
+                         "alerta_anomalia": alerta_anomalia,
+                         "riesgo": alerta_anomalia,
+                         "floracion_magnitud": bool(nivel == "floracion"),
                          "elevada": bool(nivel in ("elevada", "floracion"))})
     return {"water_body": wb, "group": group, "t0": t0, "chl0": float(chl0),
             "thr_body": float(thr_body), "thr_floracion": float(thr_floracion),
             "thr_elevada": float(thr_elevada), "n_water_px": n_water_px,
-            "alert_threshold": float(pthr), "horizons": horizons}
+            "alert_threshold": float(pthr), "horizons": horizons,
+            "feature_ages": feature_meta["feature_ages"],
+            "missing_context": feature_meta["missing_context"]}
 
 
 def predict_body(wb, t0=None):
@@ -191,18 +231,20 @@ def predict_body(wb, t0=None):
     if fc is None:
         print(f"{wb}: sin escenas / datos suficientes."); return
     t0 = fc["t0"]
-    confianza, flags, age = guards.evaluate_guards(wb, t0, fc["n_water_px"])
+    confianza, flags, age = guards.evaluate_guards(
+        wb, t0, fc["n_water_px"], feature_ages=fc.get("feature_ages"),
+        missing_context=fc.get("missing_context"))
     nota_conf = f" | confianza={confianza}" + (f" ({', '.join(flags)})" if flags else "")
     print(f"\n=== {wb.upper()} ({fc['group']}) | t0={t0.date()} (hace {age}d) | "
-          f"chl-a actual={fc['chl0']:.1f} ug/L | floracion (chl-a)>={fc['thr_floracion']:.1f} ug/L | "
+          f"chl-a actual={fc['chl0']:.1f} ug/L | floración (chl-a)>={fc['thr_floracion']:.1f} ug/L | "
           f"biomasa elevada>={fc['thr_elevada']:.1f} ug/L{nota_conf} ===")
     print(f"  {'horizonte':10s} {'chl-a_pred(ug/L)':>16s} {'banda P10-P90':>16s} {'prob_anomalia':>13s} {'NIVEL':>16s}")
     for hh in fc["horizons"]:
         banda = f"{hh['p10']:.1f}-{hh['p90']:.1f}" if hh["p10"] is not None else ""
         print(f"  +{hh['horizon']}d{'':6s} {hh['chl_pred']:>16.1f} {banda:>16s} "
               f"{hh['prob_riesgo']:>13.2f} {C.LEVEL_ES[hh['nivel']]:>16s}")
-    print("  Nota: RIESGO = biomasa algal elevada (clorofila-a anomala), NO confirma toxicidad; "
-          "requiere verificacion de campo.")
+    print("  Nota: prob_anomalia/alerta = excedencia P85 calibrada; NIVEL = magnitud de clorofila. "
+          "Ninguna confirma toxicidad; requieren verificación de campo.")
     print("  Banda P10-P90 = intervalo de incertidumbre calibrado (CQR, cobertura ~80%).")
 
 

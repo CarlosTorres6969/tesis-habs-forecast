@@ -1,0 +1,351 @@
+\documentclass[11pt]{article}
+
+% ----- Codificacion y fuentes (xelatex) -----
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setmainlanguage{spanish}
+\setmainfont{Calibri}[
+  BoldFont      = Calibri Bold,
+  ItalicFont    = Calibri Italic,
+  BoldItalicFont= Calibri Bold Italic ]
+\newfontfamily\headingfont{Calibri}
+
+% ----- Geometria y espaciado -----
+\usepackage[a4paper,margin=2.3cm]{geometry}
+\usepackage{setspace}
+\setstretch{1.12}
+\usepackage{parskip}
+
+% ----- Color y cajas -----
+\usepackage[table]{xcolor}
+\definecolor{agua}{HTML}{0F8B8D}
+\definecolor{aguaOsc}{HTML}{04302F}
+\definecolor{verde}{HTML}{2FB37F}
+\definecolor{ambar}{HTML}{E0A800}
+\definecolor{rojo}{HTML}{D64545}
+\definecolor{grisc}{HTML}{F0F5F5}
+\definecolor{lineac}{HTML}{CBD8D8}
+
+\usepackage[most]{tcolorbox}
+\newtcolorbox{aviso}{colback=rojo!8,colframe=rojo!70,boxrule=0.8pt,
+  arc=2pt,left=8pt,right=8pt,top=6pt,bottom=6pt}
+\newtcolorbox{nota}{colback=agua!8,colframe=agua!70,boxrule=0.8pt,
+  arc=2pt,left=8pt,right=8pt,top=6pt,bottom=6pt}
+
+% ----- Tablas -----
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\renewcommand{\arraystretch}{1.35}
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}
+
+% ----- Titulos de seccion -----
+\usepackage{titlesec}
+\titleformat{\section}{\headingfont\Large\bfseries\color{aguaOsc}}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\headingfont\large\bfseries\color{agua}}{\thesubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{16pt}{6pt}
+\titlespacing*{\subsection}{0pt}{10pt}{4pt}
+
+% ----- Listas -----
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=1.4em,itemsep=2pt,topsep=3pt}
+
+% ----- Encabezado/pie -----
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+\fancyhead[L]{\small\color{agua}Alerta temprana de biomasa algal (HABs)}
+\fancyhead[R]{\small\color{agua}Manual de usuario}
+\fancyfoot[C]{\small\thepage}
+
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=agua,urlcolor=agua,
+  pdftitle={Manual de usuario - Alerta temprana de biomasa algal (HABs)}}
+
+% Etiquetas de color para reemplazar emojis
+\newcommand{\lbl}[2]{\textcolor{#1}{\textbf{[#2]}}}
+
+\begin{document}
+
+% ============ PORTADA ============
+\begin{titlepage}
+\centering
+\vspace*{2.2cm}
+{\color{lineac}\rule{\textwidth}{1.2pt}}\\[1.2cm]
+{\headingfont\Huge\bfseries\color{aguaOsc} Manual de Usuario}\\[0.9cm]
+{\headingfont\LARGE\color{agua} Sistema de Alerta Temprana\\[0.3cm] de Biomasa Algal (HABs)}\\[0.8cm]
+{\Large Pron\'ostico de clorofila-a a 0--7 d\'ias}\\[1.2cm]
+{\color{lineac}\rule{\textwidth}{1.2pt}}\\[2.5cm]
+
+\begin{minipage}{0.85\textwidth}\centering\itshape\color{aguaOsc}
+Herramienta de apoyo a la decisi\'on basada en im\'agenes satelitales Sentinel-2
+y modelos de aprendizaje autom\'atico. No sustituye la verificaci\'on de campo.
+\end{minipage}
+
+\vfill
+{\large Interfaz web: \texttt{streamlit run app.py}}\\[0.4cm]
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ============ 1 ============
+\section{\'Qu\'e es este programa?}
+
+Es una herramienta de \textbf{alerta temprana} que \textbf{pronostica} la biomasa
+algal ---usando la \textbf{clorofila-a como proxy}--- en cuerpos de agua, con
+\textbf{0 a 7 d\'ias de anticipaci\'on}.
+
+Trabaja a partir de \textbf{im\'agenes satelitales Sentinel-2} y modelos ya
+entrenados. No reentrena nada: envuelve la l\'ogica de pron\'ostico existente en una
+interfaz web sencilla (Streamlit).
+
+\begin{aviso}
+\textbf{Muy importante:} es un \textbf{PRON\'OSTICO a futuro}, no una detecci\'on
+sobre la imagen que usted sube. Estima c\'omo estar\'a la biomasa dentro de 1, 3, 5
+o 7 d\'ias.
+\end{aviso}
+
+\subsection*{Lo que S\'I hace}
+\begin{itemize}
+  \item Estima la \textbf{clorofila-a media prevista} (\textmu g/L) a +1, +3, +5 y +7 d\'ias.
+  \item Genera un \textbf{mapa de biomasa algal prevista} por p\'ixel.
+  \item Da una \textbf{alerta por nivel} (Normal / Elevada / Floraci\'on).
+  \item Calcula una \textbf{banda de incertidumbre} (P10--P90, \textasciitilde80\% de confianza).
+  \item Estima la \textbf{probabilidad de una anomal\'ia} (salto at\'ipico para ese cuerpo).
+  \item Explica \textbf{por qu\'e} (variables m\'as influyentes, SHAP).
+  \item Permite \textbf{descargar} mapa, animaci\'on y resumen CSV.
+\end{itemize}
+
+\subsection*{Lo que NO hace}
+\begin{itemize}
+  \item \textbf{No confirma toxicidad} ni identifica la especie (cianobacterias, marea
+  roja). La clorofila-a mide el \textbf{pigmento}, no la toxina ni el organismo.
+  \item \textbf{No acepta fotos comunes} (RGB de celular ni capturas de Google Maps).
+  \item \textbf{No funciona fuera de los 5 cuerpos validados.}
+\end{itemize}
+
+% ============ 2 ============
+\section{Requisitos}
+\begin{itemize}
+  \item \textbf{Python} con las dependencias del proyecto instaladas.
+  \item \textbf{Modelos de producci\'on} presentes en \texttt{artifacts/models/}
+  (si faltan, se generan con \texttt{python train\_final.py}).
+  \item Un navegador web (la app abre en el navegador autom\'aticamente).
+\end{itemize}
+
+% ============ 3 ============
+\section{C\'omo abrir el programa}
+Desde una terminal, ubicado en la carpeta \texttt{habs\_forecast}:
+\begin{quote}\ttfamily streamlit run app.py\end{quote}
+Se abrir\'a una p\'agina en el navegador con el t\'itulo
+\textbf{``Alerta temprana de biomasa algal (HABs)''}.
+
+% ============ 4 ============
+\section{Cuerpos de agua disponibles (validados)}
+\begin{tabularx}{\textwidth}{L L L}
+\toprule
+\textbf{Cuerpo} & \textbf{Tipo} & \textbf{Pa\'is} \\
+\midrule
+Lago Okeechobee   & Lago / agua dulce        & Estados Unidos \\
+Bah\'ia de Tampa   & Costa / marino-estuarino & Estados Unidos \\
+Embalse El Caj\'on & Lago / agua dulce        & Honduras \\
+Golfo de Fonseca  & Costa / marino-estuarino & Honduras \\
+Lago de Yojoa     & Lago / agua dulce        & Honduras \\
+\bottomrule
+\end{tabularx}
+
+\begin{nota}
+Algunos cuerpos pueden marcarse como \textbf{EXPLORATORIOS}: no tienen verdad de campo
+in-situ en la ventana 2023--2026 y tienen menos datos. Sus resultados son de
+\textbf{menor confianza} y la app lo advierte en pantalla.
+\end{nota}
+
+% ============ 5 ============
+\section{Recorrido por la interfaz}
+
+\subsection{Barra lateral (izquierda) --- ``C\'omo leer esta herramienta''}
+Explica las reglas clave del sistema (es pron\'ostico, requiere Sentinel-2 de 5 bandas,
+solo 5 cuerpos, clorofila = proxy). L\'eala una vez antes de usar la herramienta.
+
+\subsection{Selectores (parte superior)}
+\begin{enumerate}[leftmargin=1.6em]
+  \item \textbf{Cuerpo de agua} --- elija uno de los 5 cuerpos validados.
+  \item \textbf{Horizonte de pron\'ostico} --- +1, +3, +5 o +7 d\'ias (por defecto \textbf{+3}).
+  \begin{itemize}
+    \item \textbf{+1 y +7 d\'ias} son horizontes \textit{body-level}: el modelo predice el
+    \textbf{nivel del cuerpo completo} y el mapa reparte ese nivel seg\'un el patr\'on
+    espacial actual (es una estimaci\'on, no un pron\'ostico p\'ixel a p\'ixel).
+    \item \textbf{+3 y +5 d\'ias} usan se\~nal espectral por p\'ixel: el mapa muestra un
+    \textbf{gradiente real} con detalle espacial.
+  \end{itemize}
+  \item \textbf{Tipo / Pa\'is} --- informativo (se completa solo seg\'un el cuerpo elegido).
+\end{enumerate}
+
+\subsection{Entrada de escena Sentinel-2}
+\textbf{A) Usar escena de ejemplo} (recomendado para la demostraci\'on)
+\begin{itemize}
+  \item La app \textbf{ordena las escenas por calidad} (agua m\'as limpia primero).
+  \item Con la casilla \textit{``Usar autom\'aticamente la mejor escena''} marcada, elige
+  sola la mejor fecha (evita escenas nubladas donde el agua ni se ve).
+  \item Si la desmarca, puede elegir la fecha manualmente en el desplegable (la mejor
+  aparece marcada como mejor).
+  \item Si la escena elegida tiene nubosidad/neblina, aparece una advertencia.
+\end{itemize}
+
+\textbf{B) Subir GeoTIFF}
+\begin{itemize}
+  \item Debe ser un \textbf{raster georreferenciado Sentinel-2 de 5 bandas} en el orden
+  \textbf{B2 (azul), B3 (verde), B4 (rojo), B5 (red-edge), B8 (NIR)}.
+  \item Las bandas red-edge (B5) e infrarrojo (B8) son las que estiman la clorofila; por
+  eso \textbf{una foto RGB com\'un es rechazada}.
+  \item El contexto no espectral (clorofila reciente, ERA5, in-situ) se toma de la \'ultima
+  fecha disponible del cuerpo.
+\end{itemize}
+
+\subsection{Bot\'on ``Analizar''}
+\begin{itemize}
+  \item (Opcional) Marque \textbf{``Mostrar animaci\'on tipo pron\'ostico del clima''} para
+  generar un video corto que recorre +1 $\rightarrow$ +7 d\'ias. Debe marcarse
+  \textbf{antes} de Analizar.
+  \item Pulse \textbf{Analizar}. Aparece un indicador de progreso mientras procesa la
+  escena y genera el pron\'ostico.
+\end{itemize}
+
+% ============ 6 ============
+\section{C\'omo leer los resultados}
+Tras ``Analizar'' se muestra, de arriba hacia abajo:
+
+\subsection{Encabezado}
+Cuerpo, horizonte, fecha de la escena (\textbf{t0}) y \textbf{etiqueta de confianza}
+(seg\'un frescura de datos, cobertura de p\'ixeles de agua y estado).
+
+\subsection{Mapa (2 paneles)}
+\begin{itemize}
+  \item \textbf{Izquierda:} imagen satelital real de la escena.
+  \item \textbf{Derecha:} \textbf{biomasa algal prevista} por p\'ixel para el horizonte elegido.
+\end{itemize}
+
+\subsection{Insignia de credibilidad}
+Compara el \textit{skill} validado del modelo frente a la persistencia (l\'inea base) en
+ese horizonte.
+
+\subsection{Animaci\'on (si la activ\'o)}
+Video en bucle que arranca en el estado observado de hoy y recorre la biomasa prevista a
+1, 3, 5 y 7 d\'ias, como un pron\'ostico del clima en la tele.
+
+\subsection{Nivel de biomasa algal (banner de color)}
+\begin{tabularx}{\textwidth}{c >{\bfseries}l L}
+\toprule
+\textbf{Color} & \textbf{Nivel} & \textbf{Significado} \\
+\midrule
+\lbl{verde}{VERDE}  & NORMAL          & Clorofila prevista por debajo del umbral elevado \\
+\lbl{ambar}{\'AMBAR} & BIOMASA ELEVADA & Clorofila prevista por encima del umbral elevado \\
+\lbl{rojo}{ROJO}    & FLORACI\'ON      & Clorofila prevista igual o mayor al umbral de floraci\'on \\
+\bottomrule
+\end{tabularx}
+
+Debajo se indica el \textbf{\% de \'area} en floraci\'on y en biomasa elevada.
+
+\subsection{Dos se\~nales que pueden diferir (\textit{no confundir})}
+\begin{itemize}
+  \item \textbf{NIVEL (magnitud):} cu\'anta clorofila se prev\'e, comparada con umbrales
+  biol\'ogicos (es el banner de color).
+  \item \textbf{Probabilidad de anomal\'ia (P85):} la probabilidad de un \textbf{salto
+  at\'ipico para ESE cuerpo} (clasificador calibrado).
+\end{itemize}
+Un embalse cr\'onicamente alto puede dar \textbf{nivel alto} y \textbf{anomal\'ia baja}:
+ese nivel es \textit{su} normal, no un evento inusual. Y al rev\'es. La app muestra una
+nota aclaratoria cuando ambas se\~nales divergen.
+
+\subsection{Clorofila-a prevista (intensidad)}
+Valor medio previsto en \textmu g/L con su \textbf{banda de incertidumbre P10--P90}
+(calibrada, CQR \textasciitilde80\%).
+
+\subsection{Pesta\~nas din\'amicas}
+\begin{itemize}
+  \item \textbf{Trayectoria 0--7 d\'ias:} clorofila prevista en cada horizonte con su banda;
+  el punto grande es el horizonte seleccionado, el color indica el nivel.
+  \item \textbf{Medidor de riesgo:} probabilidad calibrada de salto an\'omalo a +N d\'ias.
+  La l\'inea roja es el \textbf{umbral operativo real}: por encima, el sistema dispara
+  alerta. El umbral es bajo a prop\'osito (prioriza no perder eventos $\rightarrow$ alta
+  sensibilidad).
+  \item \textbf{\'Por qu\'e? (SHAP):} variables que m\'as pesan en el pron\'ostico. En corto
+  plazo domina la clorofila reciente; a mayor horizonte entran meteorolog\'ia, nutrientes
+  e \'indices espectrales.
+\end{itemize}
+
+% ============ 7 ============
+\section{Descargas}
+En la secci\'on \textbf{Descargas} hay tres botones:
+
+\begin{tabularx}{\textwidth}{>{\bfseries}l l L}
+\toprule
+\textbf{Bot\'on} & \textbf{Archivo} & \textbf{Contenido} \\
+\midrule
+Mapa (PNG)       & \texttt{mapa\_<cuerpo>\_h<N>\_<fecha>.png} & Los dos paneles del mapa \\
+Animaci\'on (GIF) & \texttt{animacion\_<cuerpo>\_<fecha>.gif}   & Solo si activ\'o la animaci\'on \\
+Pron\'ostico (CSV)& \texttt{pronostico\_<cuerpo>\_<fecha>.csv}  & Todos los horizontes (0--7 d) \\
+\bottomrule
+\end{tabularx}
+
+El \textbf{CSV} incluye, por horizonte: clorofila prevista, P10, P90, probabilidad de
+alerta y nivel; m\'as una cabecera con metadatos y el recordatorio de que \textbf{no
+confirma toxicidad}.
+
+% ============ 8 ============
+\section{Interpretaci\'on responsable}
+\begin{itemize}
+  \item La clorofila-a es un \textbf{proxy de biomasa}, \textbf{no} una medida de toxicidad
+  ni de la especie. Una alerta indica \textbf{riesgo que amerita verificaci\'on de campo}.
+  \item Confirmar cianobacterias, dinoflagelados o toxinas requiere \textbf{muestreo de
+  campo} (microscop\'ia / ensayos de toxinas).
+  \item Fuera de los 5 cuerpos validados \textbf{no hay modelo ni calibraci\'on}: no use la
+  herramienta ah\'i.
+  \item Trate los resultados de cuerpos \textbf{exploratorios} con cautela.
+\end{itemize}
+
+\begin{aviso}
+\textbf{Proxy de biomasa algal (clorofila-a).} NO confirma toxicidad ni floraci\'on
+nociva. Herramienta de \textbf{alerta temprana}; requiere \textbf{verificaci\'on de campo}.
+\end{aviso}
+
+% ============ 9 ============
+\section{Problemas frecuentes}
+\begin{tabularx}{\textwidth}{L L L}
+\toprule
+\textbf{Situaci\'on} & \textbf{Causa probable} & \textbf{Qu\'e hacer} \\
+\midrule
+``Faltan los modelos de producci\'on'' & No est\'an en \texttt{artifacts/models/} & Ejecutar \texttt{python train\_final.py} \\
+``No hay modelo entrenado para\ldots a +N d\'ias'' & Falta ese modelo/horizonte & Entrenar o elegir otro horizonte \\
+``El archivo NO tiene 5 bandas v\'alidas'' & Subi\'o una foto RGB o un TIFF incompleto & Usar un GeoTIFF Sentinel-2 de 5 bandas \\
+``Muy pocos p\'ixeles de agua v\'alidos'' & Escena nublada o sin agua & Probar otra fecha o la mejor escena autom\'atica \\
+Advertencia de nubosidad/neblina & La escena tiene poco agua clara & Usar la mejor escena autom\'atica u otra fecha \\
+``Explicabilidad SHAP no disponible'' & No se gener\'o SHAP & Ejecutar \texttt{python explain\_model.py} \\
+El bot\'on ``Analizar'' est\'a gris & No hay escena cargada & Seleccionar escena de ejemplo o subir GeoTIFF v\'alido \\
+\bottomrule
+\end{tabularx}
+
+% ============ 10 ============
+\section{Ficha t\'ecnica (resumen)}
+\begin{itemize}
+  \item \textbf{Modelo de intensidad + intervalos:} XGBoost con CQR (regresi\'on cuant\'ilica
+  conformalizada).
+  \item \textbf{Alerta:} red neuronal (HABNet), por grupo ecol\'ogico y horizonte.
+  \item \textbf{Validaci\'on:} pron\'ostico causal sin fuga de informaci\'on (validaci\'on
+  anidada).
+  \item \textbf{Entrada:} escena Sentinel-2 de 5 bandas (B2, B3, B4, B5, B8) + contexto no
+  espectral (clorofila reciente, ERA5, in-situ).
+  \item \textbf{Salida:} clorofila-a prevista, banda P10--P90, nivel, probabilidad de
+  anomal\'ia, mapa por p\'ixel y explicaci\'on SHAP.
+\end{itemize}
+
+\vspace{1cm}
+{\color{lineac}\rule{\textwidth}{0.6pt}}\\[0.3cm]
+{\small\itshape\color{aguaOsc} Documento generado como manual de usuario del sistema de
+alerta temprana de biomasa algal (HABs). Herramienta de apoyo a la decisi\'on; no
+sustituye la verificaci\'on de campo.}
+
+\end{document}

@@ -1,16 +1,16 @@
 """
 experiment_zonify_okeechobee.py — EXPERIMENTO (contenido): ¿zonificar Okeechobee sube RMSE/R2?
 
-Hipotesis: predecir un solo promedio de un lago grande y heterogeneo (Okeechobee, ~20 ug/L de
-dispersion intra-dia) limita el skill. Dividirlo en zonas deberia mejorar la predictibilidad.
+Hipótesis: predecir un solo promedio de un lago grande y heterogéneo (Okeechobee, ~20 ug/L de
+dispersión intra-día) limita el skill. Dividirlo en zonas debería mejorar la predictibilidad.
 
-Diseno (NO toca produccion; todo va a artifacts/experiments/zonify/):
+Diseño (NO toca producción; todo va a artifacts/experiments/zonify/):
   1. Zonas = 4 cuadrantes del bbox de Okeechobee (NW/NE/SW/SE).
-  2. TARGET por zona: VIIRS via ERDDAP por sub-bbox (reusa fetch_satellite_chl._fetch_body).
+  2. TARGET por zona: VIIRS vía ERDDAP por sub-bbox (reúsa fetch_satellite_chl._fetch_body).
   3. PREDICTOR por zona: re-agrega los rasters S2 existentes por zona (pixel UTM -> lat/lon -> zona).
   4. Pares causales (espectral + autorregresivo) IGUALES para zonas y para el cuerpo entero
-     (mismo codigo, solo cambia la granularidad espacial) -> comparacion limpia.
-  5. Metricas por horizonte (split temporal walk-forward):
+     (mismo código, solo cambia la granularidad espacial) -> comparación limpia.
+  5. Métricas por horizonte (split temporal walk-forward):
        (a) CUERPO: predecir chl del cuerpo desde predictor del cuerpo.
        (b) ZONAS: predecir chl de zona desde predictor de zona (pooled).
        (c) ZONAS->CUERPO (prueba decisiva): promediar las 4 predicciones de zona y comparar
@@ -27,6 +27,7 @@ import rasterio
 from pyproj import Transformer
 from sklearn.metrics import mean_squared_error, r2_score
 import config as C
+from temporal_validation import common_temporal_holdout
 from train import _model
 from fetch_satellite_chl import _fetch_body
 
@@ -60,7 +61,7 @@ def fetch_zoned_target():
     out = pd.concat(frames, ignore_index=True)
     out["fecha"] = pd.to_datetime(out["fecha"]).dt.tz_localize(None).dt.normalize()
     out.to_csv(Z_TARGET, index=False)
-    print(f"  -> {Z_TARGET} ({len(out)} dias-zona)")
+    print(f"  -> {Z_TARGET} ({len(out)} días-zona)")
     return out
 
 
@@ -162,8 +163,8 @@ def _split_eval(d):
         g = g.sort_values("fecha_t0")
         if len(g) < 40:
             continue
-        cut = g["fecha_t0"].quantile(0.7)
-        tr, te = g[g.fecha_t0 <= cut], g[g.fecha_t0 > cut]
+        tr, te, _ = common_temporal_holdout(
+            g, test_frac=0.30, purge_days=C.VALIDATION["purge_days"])
         if len(te) < 8 or len(tr) < 25:
             continue
         m = _model().fit(tr[FEATS], tr["log_chl_target"])
@@ -182,11 +183,11 @@ def _metrics(y, yhat, yper):
 
 
 def main():
-    print("EXPERIMENTO: zonificacion de Okeechobee (4 cuadrantes) vs cuerpo entero\n")
+    print("EXPERIMENTO: zonificación de Okeechobee (4 cuadrantes) vs cuerpo entero\n")
     print("[1/4] Target VIIRS por zona (ERDDAP)..."); ztgt = fetch_zoned_target()
     print("[2/4] Predictor espectral por zona (rasters)..."); zscene = build_zoned_scene()
 
-    # baseline cuerpo entero (mismo feature set, mismo codigo)
+    # baseline cuerpo entero (mismo feature set, mismo código)
     body_scene = pd.read_csv(os.path.join(C.DIR_STATE, "scene_state.csv"), parse_dates=["fecha"])
     body_scene = body_scene[body_scene.water_body == "okeechobee"]
     body_tgt = pd.read_csv(os.path.join(C.DIR_OUT, "targets", "combined_target.csv"), parse_dates=["fecha"])
@@ -236,9 +237,9 @@ def main():
     out = os.path.join(OUTDIR, "zonify_results.csv")
     pd.DataFrame(summary).to_csv(out, index=False)
     print(f"\n-> {out}")
-    print("\nLectura: si ZONAS mejora R2/skill vs CUERPO, la zonificacion ayuda a predecir mejor cada")
-    print("region. Si ZONAS->CUERPO (re-agregado) bate a CUERPO contra el MISMO target -> ademas")
-    print("mejora la prediccion a nivel de lago. Si no mejora -> el cuello no es la granularidad.")
+    print("\nLectura: si ZONAS mejora R2/skill vs CUERPO, la zonificación ayuda a predecir mejor cada")
+    print("región. Si ZONAS->CUERPO (re-agregado) bate a CUERPO contra el MISMO target -> además")
+    print("mejora la predicción a nivel de lago. Si no mejora -> el cuello no es la granularidad.")
 
 
 if __name__ == "__main__":

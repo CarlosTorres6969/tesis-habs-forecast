@@ -1,5 +1,10 @@
 # ESTADO DEL PROYECTO — Sistema de predicción temprana de HABs
 
+> **Aviso de vigencia (2026-07-20):** las tablas históricas de este documento muestran la
+> evolución del desarrollo. Las cifras defendibles actuales están en `REPORTE_DEFENSA.md` y
+> `artifacts/reports/nested_metrics.json`, regeneradas con corte cronológico común entre
+> cuerpos, embargo en todas las fronteras y bootstrap por bloques temporales.
+
 > Documento de continuación. Si retomas el trabajo (o una nueva sesión de IA no carga
 > contexto), **lee este archivo primero**: resume qué se hizo, en qué estado quedó, y qué sigue.
 > Última actualización: fin de jornada 2026-06-24.

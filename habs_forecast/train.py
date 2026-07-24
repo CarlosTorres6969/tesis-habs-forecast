@@ -1,14 +1,14 @@
 """
-train.py — Entrenamiento por horizonte + validacion LOWBO (lago<->lago, costa<->costa).
+train.py — Entrenamiento por horizonte + validación LOWBO (lago<->lago, costa<->costa).
 
 Decisiones (Fase 1):
   - MODELOS SEPARADOS por horizonte h en {0,1,3,5,7}.
-  - Salida hibrida: regresion de log(chl) -> clase de alerta por umbral.
-  - Validacion reina: Leave-One-Water-Body-Out DENTRO del grupo ecologico.
-  - Baseline obligatorio: persistencia (ultimo target conocido <= t0). El modelo debe superarlo.
-  - Metricas: regresion RMSE(log)/MAE/R2 ; alerta Recall/PR-AUC/F1 (eventos raros).
+  - Salida híbrida: regresión de log(chl) -> clase de alerta por umbral.
+  - Validación reina: Leave-One-Water-Body-Out DENTRO del grupo ecológico.
+  - Baseline obligatorio: persistencia (último target conocido <= t0). El modelo debe superarlo.
+  - Métricas: regresión RMSE(log)/MAE/R2 ; alerta Recall/PR-AUC/F1 (eventos raros).
 
-NO usa shuffle-CV (eso inflo las metricas del pipeline anterior). Reporta numeros honestos.
+NO usa shuffle-CV (eso infló las métricas del pipeline anterior). Reporta números honestos.
 """
 from __future__ import annotations
 import os, json, warnings
@@ -19,37 +19,39 @@ warnings.filterwarnings("ignore")
 from sklearn.metrics import (mean_squared_error, mean_absolute_error, r2_score,
                              average_precision_score, recall_score, f1_score)
 import config as C
+from temporal_validation import common_temporal_holdout
 
 PAIRS = os.path.join(C.DIR_PAIRS, "pairs_forecast.csv")
 REPORT = os.path.join(C.DIR_REPORTS, "lowbo_metrics.json")
 
 SPECTRAL = ["B2", "B3", "B4", "B5", "B8", "NDCI", "CI_red", "FAI", "turbidity"]
-# autorregresivos: trayectoria reciente de clorofila (causal <= t0). Backbone del pronostico.
+# autorregresivos: trayectoria reciente de clorofila (causal <= t0). Backbone del pronóstico.
 AUTOREG = ["log_chl_t0", "chl_lag3", "chl_lag7", "chl_roll7", "chl_trend7"]
-# dinamica temporal y estacionalidad (causales): se construyen en match_pairs y se PROBARON
-# con validacion anidada controlada (con vs sin), pero NO mejoran el skill de forma robusta
+# dinámica temporal y estacionalidad (causales): se construyen en match_pairs y se PROBARON
+# con validación anidada controlada (con vs sin), pero NO mejoran el skill de forma robusta
 # (lavado: +5d mejor pero +3d/+7d peor) -> NO se adoptan. Se dejan definidas y como columnas
 # (documentan el experimento / re-test futuro), fuera del set de features del modelo.
 DYNAMICS = ["chl_rate3", "chl_accel", "days_since_obs", "chl_roll14", "chl_roll30",
             "chl_std14", "chl_max14"]
 SEASONAL = ["doy_sin", "doy_cos", "chl_clim", "chl_anom"]
-# drivers meteorologicos ERA5 (en t0 + media movil causal 7d)
+# drivers meteorológicos ERA5 (en t0 + media móvil causal 7d)
 ERA5 = ["temp_air_2m", "solar_radiation", "precipitation", "wind_speed_10m", "surface_pressure",
         "temp_air_2m_roll7", "solar_radiation_roll7", "precipitation_roll7", "wind_speed_10m_roll7"]
 # contexto in-situ (solo Florida, NaN en Honduras -> XGBoost nativo):
-#   fosforo (lento) + calidad de agua (temp agua, OD, pH, turbidez, conductividad, Secchi, amonio)
+#   fósforo (lento) + calidad de agua (temp agua, OD, pH, turbidez, conductividad, Secchi, amonio)
 NUTRIENTS = ["tp_context"]
 WATERQUAL = ["water_temp", "do_mgl", "ph", "turbidity_insitu", "spec_cond", "secchi", "ammonia"]
 FEATURES = SPECTRAL + AUTOREG + ERA5 + NUTRIENTS + WATERQUAL   # DYNAMICS/SEASONAL probadas, no adoptadas
 
-# Sets de features POR HORIZONTE (de select_features_per_horizon.py, ablacion OOS).
-# Cada horizonte usa solo las familias que maximizan su skill (corto=optico/autorreg;
-# largo=meteo/susceptibilidad in-situ). Si falta el json -> usa FEATURES completo.
+# Sets de features POR HORIZONTE seleccionados solo en DEV por evaluate_nested.py.
+# El pipeline ejecuta esa validación antes de train_final para que el modelo desplegado use
+# exactamente las familias evaluadas. Si falta el json -> usa FEATURES completo.
 _FAMILY = {"AUTOREG": AUTOREG, "ERA5": ERA5, "SPECTRAL": SPECTRAL,
-           "INSITU": NUTRIENTS + WATERQUAL}
+           "INSITU": NUTRIENTS + WATERQUAL, "DYNAMICS": DYNAMICS,
+           "SEASONAL": SEASONAL}
 
 
-def get_features(group, horizon, available):
+def get_features(group, horizon, available, required=False):
     import json
     path = os.path.join(C.DIR_REPORTS, "feature_sets.json")
     if os.path.exists(path):
@@ -59,12 +61,20 @@ def get_features(group, horizon, available):
             feats = []
             for fam in node["families"]:
                 feats += _FAMILY.get(fam, [])
-            return [f for f in feats if f in available]
+            selected = [f for f in feats if f in available]
+            if required and not selected:
+                raise RuntimeError(f"Set validado vacio para {group} +{horizon}d")
+            return selected
+    if required:
+        raise RuntimeError(
+            f"Falta feature_sets.json validado para {group} +{horizon}d; "
+            "corre evaluate_nested.py antes de entrenar produccion"
+        )
     return [f for f in FEATURES if f in available]
 
 
 def _model():
-    # reg_lambda=3.0: regularizacion algo mayor (mejor en afinado OOS; datos modestos).
+    # reg_lambda=3.0: regularización algo mayor (mejor en afinado OOS; datos modestos).
     from xgboost import XGBRegressor
     return XGBRegressor(n_estimators=300, max_depth=4, learning_rate=0.05,
                         subsample=0.8, colsample_bytree=0.8, reg_lambda=3.0,
@@ -72,8 +82,8 @@ def _model():
 
 
 def _persistence(train, test):
-    """Baseline de PERSISTENCIA real: chl(t0+h) ~= chl(t0). Proyecta el ultimo valor
-    conocido en t0. Es el rival honesto que un pronostico util debe superar."""
+    """Baseline de PERSISTENCIA real: chl(t0+h) ~= chl(t0). Proyecta el último valor
+    conocido en t0. Es el rival honesto que un pronóstico útil debe superar."""
     if "log_chl_t0" in test:
         return test["log_chl_t0"].values
     return np.full(len(test), train["log_chl_target"].mean())
@@ -91,15 +101,15 @@ def _eval(y_log, yhat_log, thr=C.THRESHOLDS["moderate"]):
     out = {"rmse_log": rmse, "mae_log": mae, "r2": r2, "n": int(len(y_log)),
            "pos_rate": float(y_cls.mean())}
     if y_cls.sum() > 0 and y_cls.sum() < len(y_cls):
-        # alerta derivada de la regresion (regresion->umbral): tiende a subestimar picos
+        # alerta derivada de la regresión (regresión->umbral): tiende a subestimar picos
         out["recall_reg"] = float(recall_score(y_cls, yhat_cls, zero_division=0))
         out["pr_auc_reg"] = float(average_precision_score(y_cls, yhat_chl))
     return out
 
 
 def _clf(y):
-    """Clasificador directo de ALERTA (cabeza hibrida). scale_pos_weight maneja el
-    desbalance de eventos raros -> mejor Recall/PR-AUC que regresion->umbral."""
+    """Clasificador directo de ALERTA (cabeza híbrida). scale_pos_weight maneja el
+    desbalance de eventos raros -> mejor Recall/PR-AUC que regresión->umbral."""
     from xgboost import XGBClassifier
     pos = max(int(np.sum(y)), 1); neg = max(len(y) - pos, 1)
     return XGBClassifier(n_estimators=300, max_depth=4, learning_rate=0.05,
@@ -109,7 +119,7 @@ def _clf(y):
 
 
 def _eval_clf(y_cls, proba):
-    """Metricas del clasificador directo de alerta."""
+    """Métricas del clasificador directo de alerta."""
     out = {}
     if y_cls.sum() > 0 and y_cls.sum() < len(y_cls):
         pred = (proba >= 0.5).astype(int)
@@ -120,7 +130,7 @@ def _eval_clf(y_cls, proba):
 
 
 def _add_clf(tr, te, metrics, feats):
-    """Entrena el clasificador directo de alerta y agrega sus metricas (cabeza hibrida)."""
+    """Entrena el clasificador directo de alerta y agrega sus métricas (cabeza híbrida)."""
     if tr["hab_target"].nunique() > 1 and len(te):
         c = _clf(tr["hab_target"].values).fit(tr[feats], tr["hab_target"])
         proba = c.predict_proba(te[feats])[:, 1]
@@ -159,7 +169,7 @@ def lowbo(df, group):
 
 
 def walk_forward(df, group, train_frac=0.7):
-    """Validacion temporal DENTRO de cada cuerpo (modo operativo real):
+    """Validación temporal DENTRO de cada cuerpo (modo operativo real):
     entrenar con el pasado, predecir el futuro. Split por fecha_t0 al 70%."""
     sub = df[df["group"] == group]
     res = {}
@@ -171,8 +181,9 @@ def walk_forward(df, group, train_frac=0.7):
             g = g.sort_values("fecha_t0")
             if len(g) < 40:
                 continue
-            cut = g["fecha_t0"].quantile(train_frac)
-            tr, te = g[g["fecha_t0"] <= cut], g[g["fecha_t0"] > cut]
+            tr, te, _ = common_temporal_holdout(
+                g, test_frac=1 - train_frac,
+                purge_days=C.VALIDATION["purge_days"])
             if len(te) < 8 or len(tr) < 25:
                 continue
             m = _model().fit(tr[feats], tr["log_chl_target"])
@@ -211,7 +222,7 @@ def main():
         print(f"############  GRUPO: {group}  ############")
         print(f"\n--- A) WALK-FORWARD temporal dentro del cuerpo (modo operativo) ---")
         wf = walk_forward(df, group); _print_block(wf)
-        print(f"\n--- B) LOWBO {group}<->{group} (generalizacion inter-ecosistema, prueba dura) ---")
+        print(f"\n--- B) LOWBO {group}<->{group} (generalización inter-ecosistema, prueba dura) ---")
         lo = lowbo(df, group); _print_block(lo)
         report[group] = {"walk_forward": wf, "lowbo": lo}
     os.makedirs(C.DIR_REPORTS, exist_ok=True)

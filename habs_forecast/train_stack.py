@@ -18,40 +18,37 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, average_precision_score, recall_score
 import torch
 import config as C
-from train import FEATURES, PAIRS, _model, _clf
+from train import FEATURES, PAIRS, get_features, _model, _clf
 from train_nn import HABNet, _fit
 from evaluate_robust import _boot, N_FOLDS, MIN_TRAIN_FRAC
+from temporal_validation import expanding_purged_splits
 
 OUT = os.path.join(C.DIR_REPORTS, "stack_metrics.json")
 WEIGHTS = [0.0, 0.25, 0.5, 0.75, 1.0]      # w sobre XGB (0=solo red, 1=solo XGB)
 
 
 def oos_both(d, feats):
-    """Ventana expansiva: predicciones OOS de XGB y NN alineadas."""
-    d = d.sort_values("fecha_t0").reset_index(drop=True)
-    N = len(d); start = int(N * MIN_TRAIN_FRAC)
-    if N - start < N_FOLDS * 4:
-        return pd.DataFrame()
-    fold = (N - start) // N_FOLDS
+    """Ventana expansiva agrupada, por fecha y purgada, para XGB y NN."""
     rows = []
-    for k in range(N_FOLDS):
-        a = start + k * fold
-        b = N if k == N_FOLDS - 1 else a + fold
-        tr, te = d.iloc[:a], d.iloc[a:b]
-        if len(te) < 3 or len(tr) < 30:
-            continue
+    for tr, te, _ in expanding_purged_splits(
+            d, n_splits=N_FOLDS, min_train_frac=MIN_TRAIN_FRAC,
+            min_train=30, min_test=3):
         # --- XGBoost (regresion + alerta) ---
         xr = _model().fit(tr[feats], tr["log_chl_target"]).predict(te[feats])
         xp = np.full(len(te), np.nan)
         if tr["hab_target"].nunique() > 1:
             xp = _clf(tr["hab_target"].values).fit(tr[feats], tr["hab_target"]).predict_proba(te[feats])[:, 1]
         # --- Red neuronal (regresion + alerta), con imputacion+escalado ---
-        imp = SimpleImputer().fit(tr[feats]); sc = StandardScaler().fit(imp.transform(tr[feats]))
+        imp = SimpleImputer(keep_empty_features=True).fit(tr[feats])
+        sc = StandardScaler().fit(imp.transform(tr[feats]))
         Xtr = sc.transform(imp.transform(tr[feats])); Xte = sc.transform(imp.transform(te[feats]))
         net = _fit(Xtr, tr["log_chl_target"].values, tr["hab_target"].values.astype(float), len(feats))
         with torch.no_grad():
             nr, nc = net(torch.tensor(Xte, dtype=torch.float32))
         rows.append(pd.DataFrame({
+            "water_body": te["water_body"].values,
+            "fecha_t0": te["fecha_t0"].values,
+            "fecha_target": te["fecha_target"].values,
             "y_log": te["log_chl_target"].values, "persist": te["log_chl_t0"].values,
             "xgb_reg": xr, "nn_reg": nr.numpy(),
             "xgb_proba": xp, "nn_proba": torch.sigmoid(nc).numpy(),
@@ -66,13 +63,13 @@ def _skill(y, yhat, per):
 
 
 def main():
-    df = pd.read_csv(PAIRS, parse_dates=["fecha_t0"])
-    feats = [f for f in FEATURES if f in df.columns]
+    df = pd.read_csv(PAIRS, parse_dates=["fecha_t0", "fecha_target"])
     report = {}
     for group in ("freshwater", "marine"):
         print(f"\n############  UNIFICADO XGB+RED — {group}  ############")
         report[group] = {}
         for h in [1, 3, 5, 7]:
+            feats = get_features(group, h, df.columns)
             P = oos_both(df[(df["group"] == group) & (df["horizon"] == h)], feats)
             if not len(P):
                 continue

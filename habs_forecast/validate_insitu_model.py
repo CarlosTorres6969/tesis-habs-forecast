@@ -1,25 +1,26 @@
 """
-validate_insitu_model.py — VALIDACION DEL MODELO CONTRA VERDAD DE CAMPO (in-situ).
+validate_insitu_model.py — VALIDACIÓN DEL MODELO CONTRA VERDAD DE CAMPO (in-situ).
 
-Confronta las PREDICCIONES del modelo de produccion con mediciones de clorofila-a IN-SITU
-reales (gold standard), no contra otro satelite. Es la validacion externa mas fuerte.
+Confronta predicciones walk-forward con mediciones de clorofila-a IN-SITU reales.
+Cada prediccion se reajusta solo con pares cuya etiqueta era conocida antes de t0.
 
-Diseno (causal, sin fuga):
+Diseño (causal, sin fuga):
   Para cada medida in-situ (fecha D, chl_real) y cada horizonte h en {1,3,5,7}:
     - se busca una escena Sentinel-2 en t0 tal que el gap (D - t0) caiga en la tolerancia de h,
     - se construyen las features en t0 (reusando predict.build_features; solo datos <= t0),
-    - se predice chl(t0+h) con el modelo de produccion y se compara con el in-situ en D.
-  El in-situ NO se usa para entrenar -> prueba externa. Baseline: persistencia (chl en t0).
+    - se entrena el modelo agrupado solo con fecha_target < t0 y se compara con campo en D.
+  Solo se evalua 2024-2026: el in-situ de 2023 quedo reservado para calibrar la escala
+  del target y no se reutiliza como validacion. Baseline: persistencia.
 
-Metricas por horizonte: n, Pearson/Spearman (seguimiento temporal), MAE del modelo y de la
+Métricas por horizonte: n, Pearson/Spearman (seguimiento temporal), MAE del modelo y de la
 persistencia, y SKILL de campo (1 - MAE_modelo/MAE_persistencia).
 
 NOTA honesta: (1) solo Okeechobee tiene chl-a in-situ en 2023-2026 (Honduras no tiene;
 Yojoa solo Secchi <=2022). (2) El target satelital de Okeechobee fue escalado a in-situ
-(bias_correct_target), asi que la ESCALA absoluta no es 100% independiente; lo que SI es
-independiente es el SEGUIMIENTO TEMPORAL (correlacion) y el batir a la persistencia contra
-campo (ambos usan la misma escala -> comparacion justa). (3) in-situ = punto/estacion vs
-prediccion = agregado del cuerpo: hay ruido espacial inevitable (se declara).
+(bias_correct_target), así que la ESCALA absoluta no es 100% independiente; lo que SÍ es
+independiente es el SEGUIMIENTO TEMPORAL (correlación) y el batir a la persistencia contra
+campo (ambos usan la misma escala -> comparación justa). (3) in-situ = punto/estación vs
+predicción = agregado del cuerpo: hay ruido espacial inevitable (se declara).
 
 Salida: artifacts/reports/insitu_model_validation.csv (+ resumen) y figuras
   fig_insitu_dispersion.png, fig_insitu_serie.png
@@ -27,7 +28,7 @@ Salida: artifacts/reports/insitu_model_validation.csv (+ resumen) y figuras
 Uso:  python validate_insitu_model.py
 """
 from __future__ import annotations
-import os, json, joblib
+import os
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -36,16 +37,16 @@ import matplotlib.pyplot as plt
 from scipy.stats import pearsonr, spearmanr
 import config as C
 from predict import build_features, GROUP, SCENE, _load
+from train import PAIRS, get_features, _model
 
 INSITU = os.path.join(C.DIR_OUT, "targets", "insitu_chl.csv")
-MODELS = C.DIR_MODELS
 HORIZONS = [1, 3, 5, 7]
 OUT_CSV = os.path.join(C.DIR_REPORTS, "insitu_model_validation.csv")
 OUT_SUM = os.path.join(C.DIR_REPORTS, "insitu_model_validation_summary.csv")
 
 
 def _match_scene(scene_dates, D, h):
-    """Escena t0 cuyo gap (D - t0) cae en la tolerancia de h; la mas cercana al nominal h."""
+    """Escena t0 cuyo gap (D - t0) cae en la tolerancia de h; la más cercana al nominal h."""
     lo, hi = C.HORIZON_TOLERANCE[h]
     cand = [t0 for t0 in scene_dates if lo <= (D - t0).days <= hi]
     if not cand:
@@ -56,23 +57,25 @@ def _match_scene(scene_dates, D, h):
 def validate_body(wb):
     group = GROUP[wb]
     ins = pd.read_csv(INSITU, parse_dates=["fecha"])
-    ins = ins[ins["water_body"] == wb]
+    ins = ins[(ins["water_body"] == wb) &
+              (ins["fecha"] > pd.Timestamp(C.TARGET_CALIBRATION_END))]
     if ins.empty:
         return pd.DataFrame()
     # AGREGADO POR FECHA: el modelo predice un valor del CUERPO; el in-situ tiene varias estaciones
-    # por dia con gran dispersion espacial (lago grande/heterogeneo). Comparar agregado vs agregado
-    # (mediana de estaciones del dia) es lo justo; comparar contra un punto suelto mezcla la
-    # variabilidad ESPACIAL (intra-lago) con el error del pronostico.
+    # por día con gran dispersión espacial (lago grande/heterogéneo). Comparar agregado vs agregado
+    # (mediana de estaciones del día) es lo justo; comparar contra un punto suelto mezcla la
+    # variabilidad ESPACIAL (intra-lago) con el error del pronóstico.
     ins = (ins.groupby(ins["fecha"].dt.normalize())
               .agg(chl_ugl=("chl_ugl", "median"), n_est=("chl_ugl", "size"))
               .reset_index().sort_values("fecha"))
     scene_dates = sorted(_load(SCENE, wb)["fecha"].unique())
     scene_dates = [pd.Timestamp(d) for d in scene_dates]
+    pairs = pd.read_csv(PAIRS, parse_dates=["fecha_t0", "fecha_target"])
 
     rows = []
     for h in HORIZONS:
-        bundle = joblib.load(os.path.join(MODELS, f"{group}_h{h}.pkl"))
-        feats = bundle["feats"]
+        pool = pairs[(pairs["group"] == group) & (pairs["horizon"] == h)]
+        feats = get_features(group, h, pool.columns, required=True)
         for _, r in ins.iterrows():
             D, y_real = r["fecha"], r["chl_ugl"]
             t0 = _match_scene(scene_dates, D, h)
@@ -82,7 +85,11 @@ def validate_body(wb):
             if built is None:
                 continue
             X, chl0, _ = built
-            y_pred = float(np.expm1(bundle["reg"].predict(X.reindex(columns=feats))[0]))
+            train = pool[pool["fecha_target"] < t0]
+            if len(train) < 40:
+                continue
+            model = _model().fit(train[feats], train["log_chl_target"])
+            y_pred = float(np.expm1(model.predict(X.reindex(columns=feats))[0]))
             rows.append({"water_body": wb, "horizon": h, "fecha_insitu": D.date().isoformat(),
                          "t0": t0.date().isoformat(), "gap": (D - t0).days,
                          "chl_insitu": float(y_real), "chl_pred": max(y_pred, 0.0),
@@ -94,9 +101,10 @@ def anchor_target_vs_insitu(wb, tol_days=2):
     """ANCLA de campo: ¿el target satelital que el modelo pronostica sigue la realidad in-situ?
     Correlaciona el target combinado (lo que el modelo aprende a predecir) con el in-situ agregado
     por fecha, emparejando por fecha cercana (<= tol_days). Es el FUNDAMENTO de toda la cadena:
-    si el target sigue al campo, un buen pronostico del target es un buen pronostico del campo."""
+    si el target sigue al campo, un buen pronóstico del target es un buen pronóstico del campo."""
     ins = pd.read_csv(INSITU, parse_dates=["fecha"])
-    ins = ins[ins["water_body"] == wb]
+    ins = ins[(ins["water_body"] == wb) &
+              (ins["fecha"] > pd.Timestamp(C.TARGET_CALIBRATION_END))]
     if ins.empty:
         return None
     daily = (ins.groupby(ins["fecha"].dt.normalize())["chl_ugl"].median()
@@ -143,8 +151,8 @@ def fig_dispersion(detail, wb):
         ax.set_title(f"+{h}d  (r={r:.2f}, n={len(d)})", fontsize=10)
         ax.set_xlabel("Clorofila-a IN-SITU (ug/L)"); ax.grid(alpha=0.3)
     axes[0].set_ylabel("Clorofila-a PREDICHA (ug/L)")
-    fig.suptitle(f"{wb.upper()}: prediccion del modelo vs verdad de campo (in-situ) — "
-                 f"validacion externa por horizonte", fontsize=12)
+    fig.suptitle(f"{wb.upper()}: predicción del modelo vs verdad de campo (in-situ) — "
+                 f"validación externa por horizonte", fontsize=12)
     plt.tight_layout(rect=(0, 0, 1, 0.93))
     out = os.path.join(C.DIR_REPORTS, "fig_insitu_dispersion.png")
     plt.savefig(out, dpi=140, bbox_inches="tight"); plt.close()
@@ -176,7 +184,7 @@ def main():
     bodies = [wb for wb in ins["water_body"].unique() if wb in GROUP]
     print(f"Cuerpos con in-situ chl Y modelo: {bodies}")
     if not bodies:
-        print("Ningun cuerpo in-situ coincide con los modelados (Honduras sin in-situ)."); return
+        print("Ningún cuerpo in-situ coincide con los modelados (Honduras sin in-situ)."); return
 
     all_detail = []
     for wb in bodies:
@@ -184,12 +192,12 @@ def main():
         if d.empty:
             print(f"  {wb}: sin matchups escena<->in-situ en tolerancia."); continue
         all_detail.append(d)
-        print(f"\n=== {wb.upper()} — validacion contra campo (in-situ) ===")
+        print(f"\n=== {wb.upper()} — validación contra campo (in-situ) ===")
         anc = anchor_target_vs_insitu(wb)
         if anc and "pearson" in anc:
             print(f"ANCLA (target satelital vs in-situ, n={anc['n']}): "
                   f"Pearson={anc['pearson']:+.2f}  Spearman={anc['spearman']:+.2f}  "
-                  f"-> lo que el modelo pronostica SI sigue al campo")
+                  f"-> lo que el modelo pronostica SÍ sigue al campo")
         nfechas = d["fecha_insitu"].nunique()
         print(f"(in-situ utilizable: {nfechas} fechas con escena alineada; cobertura LIMITADA)")
         s = summarize(d)
@@ -204,8 +212,8 @@ def main():
                       for wb in detail.water_body.unique()], ignore_index=True)
     summ.to_csv(OUT_SUM, index=False)
     print(f"\nDetalle -> {OUT_CSV}\nResumen -> {OUT_SUM}")
-    print("\nLectura: Pearson/Spearman = seguimiento temporal (independiente del bias). "
-          "skill_campo>0 = el modelo le gana a la persistencia CONTRA verdad de campo.")
+    print("\nLectura: solo fechas posteriores a la calibracion 2023 y modelos walk-forward. "
+          "skill_campo>0 = el modelo le gana a persistencia contra campo sin mirar el futuro.")
 
 
 if __name__ == "__main__":

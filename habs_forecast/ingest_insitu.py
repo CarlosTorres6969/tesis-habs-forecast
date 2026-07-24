@@ -3,15 +3,15 @@ ingest_insitu.py — Ingesta del TARGET in-situ de alta frecuencia (clorofila-a)
 
 Motivo: el pipeline anterior usaba florida_chlorophyll_limpio.csv (1.413 filas), que
 descartaba el 99.7% del in-situ. El raw del Water Quality Portal trae ~525k medidas de
-Chlorophyll a con fecha y coordenadas -> serie temporal densa que SI permite construir
+Chlorophyll a con fecha y coordenadas -> serie temporal densa que SÍ permite construir
 targets a t+h para h en {0,1,3,5,7}.
 
 Salida: artifacts/targets/insitu_chl.csv con columnas
     fecha, lat, lon, chl_ugl, station, water_body, group
-limpio: fechas validas (2015-2026), chl>0, unidades normalizadas a ug/L.
+limpio: fechas válidas (2015-2026), chl>0, unidades normalizadas a ug/L.
 
-NO empareja con predictores aqui (eso es match_pairs.py). Solo deja el target denso y
-reporta cuantos pares 0-7 d son alcanzables.
+NO empareja con predictores aquí (eso es match_pairs.py). Solo deja el target denso y
+reporta cuántos pares 0-7 d son alcanzables.
 """
 from __future__ import annotations
 import os
@@ -36,8 +36,8 @@ COLS = {
     "unit": "ResultMeasure/MeasureUnitCode",
     "stn":  "MonitoringLocationIdentifier",
 }
-# Restriccion del proyecto: SOLO 2023-2026 (ventana de cobertura Sentinel-2).
-# En esta ventana el in-situ es escaso (~468 medidas) -> rol = VALIDACION, no target denso.
+# Restricción del proyecto: SOLO 2023-2026 (ventana de cobertura Sentinel-2).
+# En esta ventana el in-situ es escaso (~468 medidas) -> rol = VALIDACIÓN, no target denso.
 DATE_MIN, DATE_MAX = pd.Timestamp("2023-01-01"), pd.Timestamp("2026-12-31")
 
 
@@ -75,7 +75,7 @@ STATIONS = os.path.join(C.DIR_DATASETS, "wqp_stations.csv")
 
 def _merge_station_coords(df: pd.DataFrame) -> pd.DataFrame:
     """Geolocaliza por MonitoringLocationIdentifier usando wqp_stations.csv.
-    Las columnas ActivityLocation vienen vacias en ~99% de las filas."""
+    Las columnas ActivityLocation vienen vacías en ~99% de las filas."""
     if not os.path.exists(STATIONS):
         return df
     st = pd.read_csv(STATIONS).rename(columns={
@@ -96,7 +96,7 @@ def build():
     df = df.dropna(subset=["fecha", "chl"])
     df = df[(df["fecha"] >= DATE_MIN) & (df["fecha"] <= DATE_MAX)]
     df = _normalize_units(df)
-    df = df[(df["chl_ugl"] > 0) & (df["chl_ugl"] < 2000)]      # rango fisico plausible
+    df = df[(df["chl_ugl"] > 0) & (df["chl_ugl"] < 2000)]      # rango físico plausible
     df = _merge_station_coords(df)
     df = df.dropna(subset=["lat", "lon"])
 
@@ -104,7 +104,7 @@ def build():
     df["water_body"] = [w[0] for w in wb]
     df["group"] = [w[1] for w in wb]
 
-    # colapsar a una medida por estacion-dia (mediana, robusta a outliers de sonda)
+    # colapsar a una medida por estación-día (mediana, robusta a outliers de sonda)
     df["dia"] = df["fecha"].dt.normalize()
     daily = (df.groupby(["station", "dia", "lat", "lon", "water_body", "group"],
                         as_index=False)["chl_ugl"].median())
@@ -114,7 +114,7 @@ def build():
     daily.to_csv(OUT, index=False)
 
     # ------------------------------- reporte -------------------------------
-    print(f"Crudo: {n0} filas -> validas estacion-dia: {len(daily)}")
+    print(f"Crudo: {n0} filas -> válidas estación-día: {len(daily)}")
     print(f"Estaciones: {daily['station'].nunique()} | rango "
           f"{daily['fecha'].min().date()} .. {daily['fecha'].max().date()}")
     print(f"Salida: {OUT}\n")
@@ -123,7 +123,7 @@ def build():
     print(daily.groupby(["group", "water_body"]).size().to_string())
 
     # potencial de pares 0-7d: pares consecutivos por estacion con gap<=7
-    print("\n=== potencial de targets 0-7 d (gaps consecutivos por estacion) ===")
+    print("\n=== potencial de targets 0-7 d (gaps consecutivos por estación) ===")
     for g in ("freshwater", "marine"):
         sub = daily[daily["group"] == g]
         gaps = []

@@ -22,7 +22,7 @@ from make_maps import KEY2FOLDER, build_map_figure, _scene_pixels
 
 # Cuerpo pequeno y rapido (embalse angosto, pocos pixeles) para no cargar escenas enormes.
 _BODY = "cajon"
-_H = 3                       # h3 usa senal espectral por pixel -> mapa con gradiente (ruta comun)
+_H = 3                       # permite probar la desagregacion espacial heuristica
 
 
 def _find_buildable_scene(wb, limit=14):
@@ -82,10 +82,11 @@ def test_stats_independientes_del_encuadre(scene):
 
 
 def test_stats_sobre_todo_el_cuerpo(scene):
-    """n_water_px debe contar TODA el agua de la mascara (no la recortada)."""
-    _, water = _scene_pixels(scene)
+    """n_water_px debe contar TODA el agua de la mascara (no la recortada), reescalada al
+    equivalente en resolucion nativa cuando la escena se leyo decimada (factor > 1)."""
+    _, water, decim = _scene_pixels(scene)
     stats = _stats(scene)
-    assert stats["n_water_px"] == int(water.sum())
+    assert stats["n_water_px"] == int(int(water.sum()) * decim * decim)
 
 
 def test_stats_bien_formados(scene):
@@ -98,3 +99,8 @@ def test_stats_bien_formados(scene):
     assert s["thr"] > 0 and s["thr_elev"] > 0
     assert s["thr_elev"] <= s["thr"]          # orden biologico: elevada < floracion
     assert s["chl_mean"] >= 0
+
+
+def test_mapa_muestra_gradiente_heuristico(scene):
+    s = _stats(scene, gradient_focus=True)
+    assert s["spatial_mode"] == "heuristic"

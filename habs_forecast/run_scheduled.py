@@ -4,7 +4,9 @@ run_scheduled.py — Tarea PROGRAMADA: emite el pronostico operativo y verifica 
 Pensado para ejecutarse periodicamente (p.ej. diario via Task Scheduler de Windows):
   1) run_forecast.run()   -> emite pronostico de la ultima escena y lo apenda a forecast_log.csv
   2) verify_forecasts.main() -> evalua los pronosticos ya madurados (target real disponible)
-Asi la bitacora MADURA sola con el tiempo y verify_forecasts muestra desempeno real SIN backfill.
+La verificacion madura cuando la ingesta externa actualiza escenas y target. Esta tarea no
+descarga datos: debe programarse despues de los fetch/ingest correspondientes; si las fuentes
+siguen antiguas, las guardas marcaran STALE o el cuerpo se omitira.
 
 Registra todo en artifacts/forecasts/scheduled.log (ademas de la consola). Robusto: si un paso
 falla, lo loguea y continua. No entrena ni modifica modelos.

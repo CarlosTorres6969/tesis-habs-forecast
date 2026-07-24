@@ -1,12 +1,12 @@
 """
-fetch_satellite_chl.py — TARGET satelital diario de clorofila (2023-2026) via NASA/CoastWatch
+fetch_satellite_chl.py — TARGET satelital diario de clorofila (2023-2026) vía NASA/CoastWatch
 ERDDAP (VIIRS SNPP, chlor_a diario, sin credenciales).
 
-Para cada cuerpo de agua agrega los pixeles validos del bbox a una MEDIANA DIARIA -> serie
+Para cada cuerpo de agua agrega los pixeles válidos del bbox a una MEDIANA DIARIA -> serie
 de target densa e independiente de Sentinel-2 (otro sensor) para construir pares 0-7 d.
 
-Cobertura: optima en costa (Fonseca, Tampa) y Okeechobee (lago grande). Para lagos pequenos
-(Yojoa, Cajon) la resolucion ~750 m es marginal -> complementar con Sentinel-3 OLCI (ver
+Cobertura: óptima en costa (Fonseca, Tampa) y Okeechobee (lago grande). Para lagos pequeños
+(Yojoa, Cajon) la resolución ~750 m es marginal -> complementar con Sentinel-3 OLCI (ver
 fetch_olci_chl.py). Salida: artifacts/targets/satellite_chl_daily.csv
 """
 from __future__ import annotations
@@ -30,7 +30,8 @@ BODIES = {
     "cajon":          (14.70, 14.95, -87.80, -87.58, "freshwater"),
     "fonseca":        (12.90, 13.45, -87.85, -87.35, "marine"),
 }
-T0, T1 = "2023-01-01", "2026-04-30"
+T0 = os.environ.get("VIIRS_T0", "2023-01-01")
+T1 = os.environ.get("VIIRS_T1", pd.Timestamp.utcnow().date().isoformat())
 
 
 def _get(url, tries=4):
@@ -46,10 +47,12 @@ def _get(url, tries=4):
 
 
 def _fetch_body(name, la_lo, la_hi, lo_lo, lo_hi):
-    # trocear por anio evita 502 del proxy en peticiones largas
+    # trocear por año evita 502 del proxy en peticiones largas
     chunks = []
-    for yr in (2023, 2024, 2025, 2026):
-        t0 = f"{yr}-01-01"; t1 = f"{yr}-12-31" if yr < 2026 else "2026-04-30"
+    start, end = pd.Timestamp(T0), pd.Timestamp(T1)
+    for yr in range(start.year, end.year + 1):
+        t0 = max(start, pd.Timestamp(f"{yr}-01-01")).date().isoformat()
+        t1 = min(end, pd.Timestamp(f"{yr}-12-31")).date().isoformat()
         url = ERDDAP.format(t0=t0, t1=t1, la_hi=la_hi, la_lo=la_lo, lo_lo=lo_lo, lo_hi=lo_hi)
         try:
             raw = _get(url)
@@ -80,9 +83,9 @@ def build():
             d = _fetch_body(name, la_lo, la_hi, lo_lo, lo_hi)
             d["group"] = group
             frames.append(d)
-            print(f"  {name:12s}: {len(d):>4} dias con dato | "
+            print(f"  {name:12s}: {len(d):>4} días con dato | "
                   f"chl mediana={d['chl_ugl'].median():.2f} ug/L" if len(d) else
-                  f"  {name:12s}: sin datos validos")
+                  f"  {name:12s}: sin datos válidos")
         except Exception as e:
             print(f"  {name:12s}: FALLO {type(e).__name__}: {e}")
         time.sleep(1)
@@ -91,13 +94,13 @@ def build():
     out = pd.concat(frames, ignore_index=True).sort_values(["water_body", "fecha"])
     os.makedirs(OUT_DIR, exist_ok=True)
     out.to_csv(OUT, index=False)
-    print(f"\nTarget satelital diario -> {OUT} ({len(out)} dias-cuerpo)")
+    print(f"\nTarget satelital diario -> {OUT} ({len(out)} días-cuerpo)")
 
     print("\n=== potencial 0-7d (gaps consecutivos por cuerpo) ===")
     for name, g in out.groupby("water_body"):
         gaps = g["fecha"].drop_duplicates().sort_values().diff().dropna().dt.days
         n7 = int((gaps <= 7).sum())
-        print(f"  {name:12s}: {len(g):>4} dias | pares gap<=7d = {n7}")
+        print(f"  {name:12s}: {len(g):>4} días | pares gap<=7d = {n7}")
 
 
 if __name__ == "__main__":
