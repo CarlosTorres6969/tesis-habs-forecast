@@ -56,11 +56,20 @@ def main():
         f"desconocidos={set(C.EXPLORATORY_BODIES) - bodies}")
 
     # Entrenamiento e inferencia deben leer exactamente la misma serie de escenas.
+    # predict importa torch, que en CI (dependencias minimas) no esta instalado. Se importa
+    # de forma tolerante: si falta torch se omiten este check y el contrato operacional de mas
+    # abajo (solo corren en local, con artifacts/ + torch); los estaticos ya se ejecutaron.
     import match_pairs
-    import predict
-    chk("Entrenamiento e inferencia usan la misma serie de escenas",
-        os.path.abspath(match_pairs.SCENE_FILE) == os.path.abspath(predict.SCENE),
-        f"train={match_pairs.SCENE_FILE}; inferencia={predict.SCENE}")
+    try:
+        import predict
+    except ModuleNotFoundError as e:
+        predict = None
+        print(f"(sin modulo '{e.name}' -> se omiten los checks que dependen de predict; "
+              "en CI es esperado)")
+    if predict is not None:
+        chk("Entrenamiento e inferencia usan la misma serie de escenas",
+            os.path.abspath(match_pairs.SCENE_FILE) == os.path.abspath(predict.SCENE),
+            f"train={match_pairs.SCENE_FILE}; inferencia={predict.SCENE}")
 
     # La correccion de escala debe estar congelada antes de toda evaluacion final.
     correction_meta = os.path.join(C.DIR_OUT, "targets", "satellite_chl_correction_meta.json")
@@ -157,22 +166,24 @@ def main():
 
     # Contrato de salida operacional: la banda contiene el punto y la bandera respeta
     # exactamente el umbral probabilistico guardado. Los cuerpos sin input fresco se omiten.
-    coherent, checked, det_forecast = True, 0, []
-    for water_body in predict.GROUP:
-        forecast = predict.forecast_body(water_body)
-        if forecast is None:
-            continue
-        for horizon in forecast["horizons"]:
-            checked += 1
-            band_ok = (horizon["p10"] is None or
-                       horizon["p10"] <= horizon["chl_pred"] <= horizon["p90"])
-            alert_ok = (horizon["alerta_anomalia"] ==
-                        (horizon["prob_riesgo"] >= forecast["alert_threshold"]))
-            if not band_ok or not alert_ok:
-                coherent = False
-                det_forecast.append(f"{water_body}+{horizon['horizon']}d")
-    chk("Salida operacional: intervalo coherente y alerta reproducible", coherent,
-        f"revisados={checked}; fallas={det_forecast}")
+    # (requiere predict -> torch; si no esta disponible se omite este contrato).
+    if predict is not None:
+        coherent, checked, det_forecast = True, 0, []
+        for water_body in predict.GROUP:
+            forecast = predict.forecast_body(water_body)
+            if forecast is None:
+                continue
+            for horizon in forecast["horizons"]:
+                checked += 1
+                band_ok = (horizon["p10"] is None or
+                           horizon["p10"] <= horizon["chl_pred"] <= horizon["p90"])
+                alert_ok = (horizon["alerta_anomalia"] ==
+                            (horizon["prob_riesgo"] >= forecast["alert_threshold"]))
+                if not band_ok or not alert_ok:
+                    coherent = False
+                    det_forecast.append(f"{water_body}+{horizon['horizon']}d")
+        chk("Salida operacional: intervalo coherente y alerta reproducible", coherent,
+            f"revisados={checked}; fallas={det_forecast}")
     _report()
 
 
